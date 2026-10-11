@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <!-- If the map ever fails to load, delete this CSP line first to rule it out. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src https: data: blob:; font-src https://fonts.gstatic.com data:; connect-src https://api.github.com https://*.googleapis.com https://*.gstatic.com; worker-src blob:; frame-src https://*.google.com; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>GPS Live Map</title>
+  <style>
+    :root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
+    body { position: fixed; inset: 0; background: #e8eaed; }
+    #map { position: fixed; inset: 0; width: 100%; height: 100%; height: 100dvh; }
+    #liveButton {
+      position: fixed;
+      z-index: 1000;
+      left: max(16px, env(safe-area-inset-left));
+      bottom: max(18px, env(safe-area-inset-bottom));
+      min-width: 112px;
+      min-height: 48px;
+      padding: 12px 20px;
+      border: 1px solid rgba(255,255,255,.35);
+      border-radius: 999px;
+      background: rgba(128, 128, 128, .30);
+      color: #222;
+      font-size: 15px;
+      font-weight: 750;
+      letter-spacing: .04em;
+      box-shadow: 0 3px 14px rgba(0,0,0,.28);
+      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(12px);
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #liveButton.live { background: rgba(220, 35, 45, .94); color: #fff; }
+    #liveButton:disabled { opacity: .6; }
+    /* Hidden unless there is something you need to know (waiting, errors) or ?debug is in the URL. */
+    #status {
+      position: fixed;
+      z-index: 1000;
+      left: max(16px, env(safe-area-inset-left));
+      bottom: calc(max(18px, env(safe-area-inset-bottom)) + 58px);
+      max-width: min(88vw, 420px);
+      padding: 7px 10px;
+      border-radius: 9px;
+      background: rgba(20, 30, 40, .72);
+      color: #fff;
+      font-size: 12px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+      pointer-events: none;
+    }
+    #status[hidden] { display: none; }
+    #lock {
+      position: fixed;
+      z-index: 3000;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(20, 30, 40, .55);
+      -webkit-backdrop-filter: blur(6px);
+      backdrop-filter: blur(6px);
+    }
+    #lock[hidden] { display: none; }
+    #lockForm {
+      width: min(100%, 360px);
+      padding: 22px;
+      border-radius: 16px;
+      background: #fff;
+      box-shadow: 0 10px 40px rgba(0,0,0,.35);
+    }
+    #lockForm h1 { margin: 0 0 14px; font-size: 18px; }
+    #lockForm label { display: block; margin-bottom: 6px; font-size: 13px; color: #444; }
+    #token { width: 100%; padding: 12px; font-size: 16px; border: 1px solid #bbb; border-radius: 10px; }
+    #unlock {
+      width: 100%;
+      min-height: 46px;
+      margin-top: 12px;
+      border: 0;
+      border-radius: 10px;
+      background: #1a73e8;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 700;
+    }
+    #unlock:disabled { opacity: .6; }
+    #lockError { min-height: 1.3em; margin: 10px 0 0; font-size: 13px; color: #b3261e; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <div id="map" aria-label="Live GPS map"></div>
+  <button id="liveButton" type="button" disabled>LIVE</button>
+  <div id="status" role="status" aria-live="polite" hidden></div>
+
+  <div id="lock" role="dialog" aria-modal="true" aria-labelledby="lockTitle">
+    <form id="lockForm" autocomplete="off">
+      <h1 id="lockTitle">GPS Live Map</h1>
+      <label for="token">Access token</label>
+      <input id="token" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+      <button id="unlock" type="submit">Unlock</button>
+      <p id="lockError" role="alert"></p>
+    </form>
+  </div>
+
+  <script>
+  (() => {
+    "use strict";
+
+    // These two values are NOT secrets. Without a valid token the private repo reveals nothing.
+    const DATA_OWNER = "skymonk199999";
+    const DATA_REPO = "gps_locator";
+    const BRANCH = "main";
+
+    const LIVE_PATH = "gps/live.json";
+    const LATEST_PATH = "gps/latest.json";
+    const MAPS_CONFIG_PATH = "config/maps.json";   // {"key": "<Google Maps API key>"} in the private repo
+    const POLL_MS = 2000;
+    const MAX_LIVE_MS = 60000;
+    const FETCH_TIMEOUT_MS = 8000;
+    const DEBUG = new URLSearchParams(location.search).has("debug");
+
+    const $ = id => document.getElementById(id);
+    const button = $("liveButton");
+    const statusEl = $("status");
+    const lockEl = $("lock");
+    const lockForm = $("lockForm");
+    const tokenInput = $("token");
+    const unlockBtn = $("unlock");
+    const lockError = $("lockError");
+
+    let token = "";                 // kept in memory only; never written to storage
+    let map = null;
+    let marker = null;
+    let liveOn = false;
+    let sessionId = "";
+    let startedAt = 0;
+    let pollTimer = null;
+    let stopTimer = null;
+    let polling = false;
+    let stopping = false;
+    let busy = false;
+    let fetchCount = 0;
+
+    // ---------- status line ----------
+    function showStatus(message, level = "notice") {
+      if (level === "debug" && !DEBUG) return;
+      statusEl.textContent = message;
+      statusEl.hidden = false;
+    }
+    function clearStatus() {
+      statusEl.textContent = "";
+      statusEl.hidden = true;
+    }
+
+    // ---------- GitHub helpers ----------
+    function validName(text) { return /^[A-Za-z0-9._-]+$/.test(text) && !text.startsWith("YOUR_"); }
+    function checkConfig() {
+      if (!validName(DATA_OWNER) || !validName(DATA_REPO)) {
+        throw new Error("Edit DATA_OWNER and DATA_REPO in index.html first.");
+      }
+    }
+    function fileUrl(path) {
+      return `https://api.github.com/repos/${encodeURIComponent(DATA_OWNER)}/${encodeURIComponent(DATA_REPO)}/contents/${path}`;
+    }
+    function readUrl(path, tag = "") {
+      return `${fileUrl(path)}?ref=${encodeURIComponent(BRANCH)}&_=${Date.now()}${tag}`;
+    }
+    function headers(raw) {
+      return {
+        "Accept": raw ? "application/vnd.github.raw+json" : "application/vnd.github+json",
+        "Authorization": `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2022-11-28"
+      };
+    }
+    async function ghFetch(url, options = {}) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+      try {
+        return await fetch(url, {
+          ...options,
+          signal: controller.signal,
+          cache: "no-store",
+          credentials: "omit",
+          referrerPolicy: "no-referrer",
+          mode: "cors"
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    async function httpError(response, what) {
+      let detail = "";
+      try { detail = (await response.text()).slice(0, 160); } catch (_) { /* ignore */ }
+      const error = new Error(`GitHub HTTP ${response.status} for ${what}${detail ? ": " + detail : ""}`);
+      error.status = response.status;
+      return error;
+    }
+    async function readJson(path) {
+      const response = await ghFetch(readUrl(path), { headers: headers(true) });
+      if (!response.ok) throw await httpError(response, path);
+      return JSON.parse(await response.text());
+    }
+    function base64Utf8(text) {
+      const bytes = new TextEncoder().encode(text);
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return btoa(binary);
+    }
+    async function writeLive(enabled, id) {
+      const content = base64Utf8(JSON.stringify({ live: enabled, id }, null, 2) + "\n");
+      const maxAttempts = 5;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        let sha = null;
+        const getResponse = await ghFetch(readUrl(LIVE_PATH, `-${attempt}`), { headers: headers(false) });
+        if (getResponse.ok) {
+          sha = (await getResponse.json()).sha || null;
+          if (!sha) throw new Error("GitHub did not return a SHA for the live file.");
+        } else if (getResponse.status !== 404) {
+          throw await httpError(getResponse, LIVE_PATH);
+        }
+        const body = { message: `LIVE ${enabled ? "ON" : "OFF"}`, content, branch: BRANCH };
+        if (sha) body.sha = sha;
+        const putResponse = await ghFetch(fileUrl(LIVE_PATH), {
+          method: "PUT",
+          headers: { ...headers(false), "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        if (putResponse.ok) return;
+        if ((putResponse.status === 409 || putResponse.status >= 500) && attempt < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, Math.min(250 * 2 ** (attempt - 1), 2500)));
+          continue;
+        }
+        throw await httpError(putResponse, LIVE_PATH);
+      }
+      throw new Error("Could not update the live file.");
+    }
+
+    // ---------- errors ----------
+    function describe(error) {
+      if (error && error.name === "AbortError") return "Network timeout. Check your connection.";
+      if (error && error.status === 401) return "Token rejected (wrong or expired).";
+      if (error && (error.status === 403 || error.status === 429)) return "GitHub refused the request (token permissions or rate limit).";
+      if (error && error.status === 404) return "Not found. Check the repository name, config/maps.json, and that the token can access the repository.";
+      return (error && error.message) || String(error);
+    }
+    function relock(message) {
+      token = "";
+      stopLocal();
+      button.disabled = true;
+      lockError.textContent = message;
+      lockEl.hidden = false;
+      tokenInput.focus();
+    }
+    function handleError(error) {
+      if (error && error.status === 401) {
+        relock("Token rejected (wrong or expired). Enter it again.");
+        return;
+      }
+      showStatus(describe(error), "error");
+    }
+
+    // ---------- map ----------
+    function setButtonState(on) {
+      button.classList.toggle("live", on);
+      button.setAttribute("aria-pressed", String(on));
+    }
+    function loadGoogleMaps(key) {
+      if (map) return Promise.resolve();
+      return new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        const timer = setTimeout(() => { script.remove(); reject(new Error("Google Maps did not load in time.")); }, 20000);
+        window.gpsMapInit = () => {
+          clearTimeout(timer);
+          try {
+            map = new google.maps.Map($("map"), {
+              center: { lat: 3.1390, lng: 101.6869 },
+              zoom: 12,
+              mapTypeControl: false,
+              streetViewControl: false,
+              fullscreenControl: false,
+              clickableIcons: false,
+              gestureHandling: "greedy",
+              keyboardShortcuts: false
+            });
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        };
+        window.gm_authFailure = () => showStatus("Google Maps rejected the API key. Check its referrer restriction, enabled API and billing.", "error");
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&callback=gpsMapInit`;
+        script.async = true;
+        script.defer = true;
+        script.onerror = () => { clearTimeout(timer); script.remove(); reject(new Error("Could not load Google Maps.")); };
+        document.head.appendChild(script);
+      });
+    }
+    function updateMarker(lat, lng) {
+      const position = { lat, lng };
+      if (!marker) {
+        marker = new google.maps.Marker({ map, position, title: "Current GPS location", optimized: false });
+        map.setCenter(position);
+        map.setZoom(16);
+      } else {
+        marker.setPosition(position);
+        map.panTo(position);
+      }
+    }
+
+    // ---------- live session ----------
+    function newSessionId() {
+      const bytes = new Uint8Array(9);
+      crypto.getRandomValues(bytes);
+      return Date.now().toString(36) + Array.from(bytes, b => (b % 36).toString(36)).join("");
+    }
+    function stopLocal() {
+      liveOn = false;
+      clearTimeout(pollTimer);
+      clearTimeout(stopTimer);
+      pollTimer = null;
+      stopTimer = null;
+      setButtonState(false);
+    }
+    async function stopLive(message, level = "notice") {
+      if (stopping || !liveOn) return;
+      stopping = true;
+      const id = sessionId;
+      stopLocal();
+      showStatus(message, level);
+      try {
+        await writeLive(false, id);
+      } catch (error) {
+        if (error && error.status === 401) { relock("Token rejected (wrong or expired). Enter it again."); }
+        else showStatus(`LIVE stopped here, but the tracker may keep running until its own 60 s limit. (${describe(error)})`, "error");
+      } finally {
+        stopping = false;
+      }
+    }
+    async function startLive() {
+      sessionId = newSessionId();
+      showStatus("Starting LIVE…", "debug");
+      await writeLive(true, sessionId);
+      liveOn = true;
+      startedAt = Date.now();
+      fetchCount = 0;
+      setButtonState(true);
+      showStatus("Waiting for the tracker (it checks in every ~10 s)…");
+      stopTimer = setTimeout(() => { stopLive("60-second LIVE limit reached.").catch(handleError); }, MAX_LIVE_MS);
+      pollLatest();
+    }
+    function applyData(data, id) {
+      if (!data || data.session !== id) {
+        showStatus("Waiting for the tracker (it checks in every ~10 s)…");
+        return;
+      }
+      const lat = data.latitude;
+      const lng = data.longitude;
+      if (lat === null || lng === null || data.fix_quality === 0) {
+        showStatus("Tracker online. Waiting for a GPS fix…");
+        return;
+      }
+      if (typeof lat !== "number" || typeof lng !== "number" ||
+          !Number.isFinite(lat) || !Number.isFinite(lng) ||
+          lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        throw new Error("latest.json contains invalid latitude/longitude.");
+      }
+      updateMarker(lat, lng);
+      clearStatus();
+      const left = Math.max(0, Math.ceil((MAX_LIVE_MS - (Date.now() - startedAt)) / 1000));
+      showStatus(`GPS ${lat.toFixed(6)}, ${lng.toFixed(6)} · fetches ${fetchCount} · ${left}s left`, "debug");
+    }
+    async function pollLatest() {
+      if (!liveOn || polling) return;
+      polling = true;
+      const id = sessionId;
+      try {
+        if (Date.now() - startedAt >= MAX_LIVE_MS) {
+          await stopLive("60-second LIVE limit reached.");
+          return;
+        }
+        let data = null;
+        try {
+          data = await readJson(LATEST_PATH);
+        } catch (error) {
+          if (error.status !== 404) throw error;   // no file yet: the tracker has not written anything
+        }
+        if (!liveOn || id !== sessionId) return;
+        fetchCount++;
+        applyData(data, id);
+      } catch (error) {
+        if (error && (error.status === 403 || error.status === 429)) {
+          await stopLive(describe(error), "error");
+        } else {
+          handleError(error);
+        }
+      } finally {
+        polling = false;
+        if (liveOn) pollTimer = setTimeout(pollLatest, POLL_MS);
+      }
+    }
+
+    // ---------- unlock ----------
+    lockForm.addEventListener("submit", async event => {
+      event.preventDefault();
+      const value = tokenInput.value.trim();
+      tokenInput.value = "";
+      if (!value) return;
+      unlockBtn.disabled = true;
+      lockError.textContent = "Checking…";
+      try {
+        checkConfig();
+        token = value;
+        const config = await readJson(MAPS_CONFIG_PATH);
+        const key = typeof config.key === "string" ? config.key.trim() : "";
+        if (!/^[A-Za-z0-9_-]{30,80}$/.test(key)) throw new Error("config/maps.json does not contain a valid Maps key.");
+        await loadGoogleMaps(key);
+        lockError.textContent = "";
+        lockEl.hidden = true;
+        button.disabled = false;
+      } catch (error) {
+        token = "";
+        lockError.textContent = describe(error);
+      } finally {
+        unlockBtn.disabled = false;
+      }
+    });
+
+    button.addEventListener("click", async () => {
+      if (busy) return;
+      busy = true;
+      button.disabled = true;
+      try {
+        if (!liveOn) await startLive();
+        else await stopLive("LIVE stopped.");
+      } catch (error) {
+        handleError(error);
+      } finally {
+        busy = false;
+        if (token) button.disabled = false;
+      }
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && liveOn && !polling) {
+        clearTimeout(pollTimer);
+        pollLatest();
+      }
+    });
+
+    setButtonState(false);
+    try { checkConfig(); } catch (error) { lockError.textContent = error.message; unlockBtn.disabled = true; }
+  })();
+  </script>
+</body>
+</html>
