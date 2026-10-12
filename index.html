@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#ffffff">
   <!-- If the map ever fails to load, delete this CSP line first to rule it out. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src https: data: blob:; font-src https://fonts.gstatic.com data:; connect-src https://api.github.com https://*.googleapis.com https://*.gstatic.com; worker-src blob:; frame-src https://*.google.com; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src https: data: blob:; font-src https://fonts.gstatic.com data:; connect-src https://api.github.com https://*.googleapis.com https://*.gstatic.com https://*.google.com; worker-src blob:; frame-src https://*.google.com; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>GPS Live Map</title>
   <style>
     :root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
@@ -34,27 +34,9 @@
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
     }
-    #liveButton.live { background: rgba(220, 35, 45, .94); color: #fff; }
+    /* LIVE: red at 70% transparency (alpha .30). The text shadow keeps the label readable on the map. */
+    #liveButton.live { background: rgba(220, 35, 45, .30); color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.65); }
     #liveButton:disabled { opacity: .6; }
-    /* Hidden unless there is something you need to know (waiting, errors) or ?debug is in the URL. */
-    #status {
-      position: fixed;
-      z-index: 1000;
-      left: max(16px, env(safe-area-inset-left));
-      bottom: calc(max(18px, env(safe-area-inset-bottom)) + 58px);
-      max-width: min(88vw, 420px);
-      padding: 7px 10px;
-      border-radius: 9px;
-      background: rgba(20, 30, 40, .72);
-      color: #fff;
-      font-size: 12px;
-      line-height: 1.35;
-      overflow-wrap: anywhere;
-      -webkit-backdrop-filter: blur(10px);
-      backdrop-filter: blur(10px);
-      pointer-events: none;
-    }
-    #status[hidden] { display: none; }
     #lock {
       position: fixed;
       z-index: 3000;
@@ -96,7 +78,6 @@
 <body>
   <div id="map" aria-label="Live GPS map"></div>
   <button id="liveButton" type="button" disabled>LIVE</button>
-  <div id="status" role="status" aria-live="polite" hidden></div>
 
   <div id="lock" role="dialog" aria-modal="true" aria-labelledby="lockTitle">
     <form id="lockForm" autocomplete="off">
@@ -113,8 +94,8 @@
     "use strict";
 
     // These two values are NOT secrets. Without a valid token the private repo reveals nothing.
-    const DATA_OWNER = "skymonk199999";
-    const DATA_REPO = "gps_locator";
+    const DATA_OWNER = "YOUR_GITHUB_USERNAME";
+    const DATA_REPO = "YOUR_PRIVATE_DATA_REPO";
     const BRANCH = "main";
 
     const LIVE_PATH = "gps/live.json";
@@ -127,7 +108,6 @@
 
     const $ = id => document.getElementById(id);
     const button = $("liveButton");
-    const statusEl = $("status");
     const lockEl = $("lock");
     const lockForm = $("lockForm");
     const tokenInput = $("token");
@@ -137,6 +117,7 @@
     let token = "";                 // kept in memory only; never written to storage
     let map = null;
     let marker = null;
+    let followPaused = false;       // true while you look around or inspect a place
     let liveOn = false;
     let sessionId = "";
     let startedAt = 0;
@@ -147,15 +128,16 @@
     let busy = false;
     let fetchCount = 0;
 
-    // ---------- status line ----------
+    // ---------- status messages ----------
+    // There is no on-screen status box any more. Messages go to the browser console
+    // (errors always, progress only with ?debug in the URL) and to the LIVE button's tooltip.
     function showStatus(message, level = "notice") {
-      if (level === "debug" && !DEBUG) return;
-      statusEl.textContent = message;
-      statusEl.hidden = false;
+      if (level === "error") console.warn("[GPS]", message);
+      else if (DEBUG) console.log("[GPS]", message);
+      if (level !== "debug") button.title = message;
     }
     function clearStatus() {
-      statusEl.textContent = "";
-      statusEl.hidden = true;
+      button.removeAttribute("title");
     }
 
     // ---------- GitHub helpers ----------
@@ -281,13 +263,24 @@
             map = new google.maps.Map($("map"), {
               center: { lat: 3.1390, lng: 101.6869 },
               zoom: 12,
+              // No on-screen map buttons (zoom +/-, street view, map type, fullscreen, rotate).
+              // Pinch / scroll / double-tap still zoom.
+              disableDefaultUI: true,
+              zoomControl: false,
+              cameraControl: false,
+              rotateControl: false,
               mapTypeControl: false,
               streetViewControl: false,
               fullscreenControl: false,
-              clickableIcons: false,
+              // Place names and icons are clickable and open Google's own info popup.
+              clickableIcons: true,
               gestureHandling: "greedy",
               keyboardShortcuts: false
             });
+            // Do not stop the click (no e.stop()): Google then shows its normal place popup.
+            // While you are looking at a place the map must not jump back to the tracker.
+            map.addListener("click", event => { followPaused = Boolean(event && event.placeId); });
+            map.addListener("dragstart", () => { followPaused = true; });
             resolve();
           } catch (error) {
             reject(error);
@@ -305,11 +298,13 @@
       const position = { lat, lng };
       if (!marker) {
         marker = new google.maps.Marker({ map, position, title: "Current GPS location", optimized: false });
+        // Tapping the red marker makes the map follow the tracker again.
+        marker.addListener("click", () => { followPaused = false; map.panTo(marker.getPosition()); });
         map.setCenter(position);
         map.setZoom(16);
       } else {
         marker.setPosition(position);
-        map.panTo(position);
+        if (!followPaused) map.panTo(position);
       }
     }
 
@@ -347,6 +342,7 @@
       showStatus("Starting LIVE…", "debug");
       await writeLive(true, sessionId);
       liveOn = true;
+      followPaused = false;
       startedAt = Date.now();
       fetchCount = 0;
       setButtonState(true);
