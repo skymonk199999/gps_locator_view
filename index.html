@@ -2,21 +2,48 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <!-- viewport-fit=cover lets the page use the whole screen, including the area behind the notch / Dynamic Island. -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#ffffff">
+  <meta name="theme-color" content="#e8eaed">
+  <!-- When added to the iPhone Home Screen the page opens as a full-screen app and the map draws under the status bar. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="GPS Map">
   <!-- If the map ever fails to load, delete this CSP line first to rule it out. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src https: data: blob:; font-src https://fonts.gstatic.com data:; connect-src https://api.github.com https://*.googleapis.com https://*.gstatic.com; worker-src blob:; frame-src https://*.google.com; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src https: data: blob:; font-src https://fonts.gstatic.com data:; connect-src https://api.github.com https://*.googleapis.com https://*.gstatic.com https://*.google.com; worker-src blob:; frame-src https://*.google.com; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>GPS Live Map</title>
   <style>
     :root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     * { box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
-    body { position: fixed; inset: 0; background: #e8eaed; }
-    #map { position: fixed; inset: 0; width: 100%; height: 100%; height: 100dvh; }
-    #liveButton {
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      overscroll-behavior: none;
+      background: #e8eaed;
+    }
+    body { position: fixed; inset: 0; -webkit-text-size-adjust: 100%; }
+    /* Edge to edge: pinned to all four screen edges (no fixed height), so with viewport-fit=cover it also
+       fills the status bar, Dynamic Island and home indicator areas. */
+    #map { position: fixed; inset: 0; }
+    /* The status bar text is always white in full-screen mode; this soft shade keeps it readable on a light map.
+       Its height is the top safe area, so it is invisible where there is none (desktop, Safari tab). */
+    #topScrim {
+      position: fixed;
+      z-index: 500;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: env(safe-area-inset-top, 0px);
+      background: linear-gradient(to bottom, rgba(0, 0, 0, .40), rgba(0, 0, 0, 0));
+      pointer-events: none;
+    }
+    .fab {
       position: fixed;
       z-index: 1000;
-      left: max(16px, env(safe-area-inset-left));
       bottom: max(18px, env(safe-area-inset-bottom));
       min-width: 112px;
       min-height: 48px;
@@ -25,6 +52,7 @@
       border-radius: 999px;
       background: rgba(128, 128, 128, .30);
       color: #222;
+      font-family: inherit;
       font-size: 15px;
       font-weight: 750;
       letter-spacing: .04em;
@@ -33,28 +61,29 @@
       backdrop-filter: blur(12px);
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
     }
-    #liveButton.live { background: rgba(220, 35, 45, .94); color: #fff; }
-    #liveButton:disabled { opacity: .6; }
-    /* Hidden unless there is something you need to know (waiting, errors) or ?debug is in the URL. */
-    #status {
-      position: fixed;
-      z-index: 1000;
-      left: max(16px, env(safe-area-inset-left));
-      bottom: calc(max(18px, env(safe-area-inset-bottom)) + 58px);
-      max-width: min(88vw, 420px);
-      padding: 7px 10px;
-      border-radius: 9px;
-      background: rgba(20, 30, 40, .72);
-      color: #fff;
-      font-size: 12px;
-      line-height: 1.35;
-      overflow-wrap: anywhere;
-      -webkit-backdrop-filter: blur(10px);
-      backdrop-filter: blur(10px);
-      pointer-events: none;
+    .fab:disabled { opacity: .6; }
+    #liveButton { left: max(16px, env(safe-area-inset-left)); }
+    #trackButton { right: max(16px, env(safe-area-inset-right)); isolation: isolate; overflow: hidden; }
+    /* LIVE / TRACK switched on: red at 70% transparency (alpha .30). The text shadow keeps the label readable. */
+    #liveButton.live, #trackButton.rec { background: rgba(220, 35, 45, .30); color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.65); }
+    /* Progress fill while TRACK is held down for the 3-second "clear footsteps" press. */
+    #trackButton::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      background: rgba(255, 255, 255, .55);
+      transform: scaleX(0);
+      transform-origin: left center;
+      transition: transform .2s ease-out;
     }
-    #status[hidden] { display: none; }
+    #trackButton.holding::before { transform: scaleX(1); transition: transform var(--hold, 3000ms) linear; }
+    /* Orange ring: the track file could not be saved yet. It keeps retrying and the ring disappears once saved. */
+    #trackButton.warn { box-shadow: 0 0 0 3px rgba(255, 170, 0, .95), 0 3px 14px rgba(0,0,0,.28); }
     #lock {
       position: fixed;
       z-index: 3000;
@@ -95,8 +124,9 @@
 </head>
 <body>
   <div id="map" aria-label="Live GPS map"></div>
-  <button id="liveButton" type="button" disabled>LIVE</button>
-  <div id="status" role="status" aria-live="polite" hidden></div>
+  <div id="topScrim" aria-hidden="true"></div>
+  <button id="liveButton" class="fab" type="button" disabled>LIVE</button>
+  <button id="trackButton" class="fab" type="button" disabled aria-pressed="false" aria-label="Track: tap to record footsteps, hold 3 seconds to clear them">TRACK</button>
 
   <div id="lock" role="dialog" aria-modal="true" aria-labelledby="lockTitle">
     <form id="lockForm" autocomplete="off">
@@ -113,8 +143,8 @@
     "use strict";
 
     // These two values are NOT secrets. Without a valid token the private repo reveals nothing.
-    const DATA_OWNER = "skymonk199999";
-    const DATA_REPO = "gps_locator";
+    const DATA_OWNER = "YOUR_GITHUB_USERNAME";
+    const DATA_REPO = "YOUR_PRIVATE_DATA_REPO";
     const BRANCH = "main";
 
     const LIVE_PATH = "gps/live.json";
@@ -123,11 +153,25 @@
     const POLL_MS = 2000;
     const MAX_LIVE_MS = 60000;
     const FETCH_TIMEOUT_MS = 8000;
+
+    // TRACK (footsteps + datalog)
+    const TRACK_DIR = "gps";                 // track files are saved in the private repo as gps/track1.json, ...
+    const TRACK_AUTO_NUMBER = true;          // true: track1.json, track2.json, ... (nothing is overwritten); false: always track1.json
+    const TRACK_SAVE_MS = 15000;             // while recording, save the datalog at most this often (and when you stop)
+    const TRACK_RETRY_MS = 5000;             // first retry delay after a failed save (doubles, max 60 s)
+    const TRACK_PUT_TIMEOUT_MS = 30000;      // a long track is a bigger upload than the small LIVE file
+    const MAX_TRACK_POINTS = 3000;           // safety limit: recording stops here
+    const CLEAR_HOLD_MS = 3000;              // hold TRACK this long to clear the footsteps
+    const STEP_SCALE = 1.0;                  // footstep icon size (about 20 px long)
+    const STEP_TURN_MIN_M = 2;               // below this distance the walking direction is not trusted
+    const POINT_FIELDS = ["gps_date", "gps_utc", "latitude", "longitude", "altitude_m",
+                          "speed_kmh", "course_deg", "satellites", "hdop", "fix_quality"];
+
     const DEBUG = new URLSearchParams(location.search).has("debug");
 
     const $ = id => document.getElementById(id);
     const button = $("liveButton");
-    const statusEl = $("status");
+    const trackButton = $("trackButton");
     const lockEl = $("lock");
     const lockForm = $("lockForm");
     const tokenInput = $("token");
@@ -137,6 +181,7 @@
     let token = "";                 // kept in memory only; never written to storage
     let map = null;
     let marker = null;
+    let followPaused = false;       // true while you look around or inspect a place
     let liveOn = false;
     let sessionId = "";
     let startedAt = 0;
@@ -147,15 +192,25 @@
     let busy = false;
     let fetchCount = 0;
 
-    // ---------- status line ----------
+    let recording = false;          // TRACK is on
+    let track = null;               // the current (or last) recording
+    let footsteps = [];             // [{ marker, left, aimed }]
+    let lastStep = null;
+    let lastHeading = 0;
+    let saveChain = Promise.resolve();
+    const pendingTracks = new Set();   // tracks with points not saved yet
+    const failing = new Set();         // tracks whose last save failed
+
+    // ---------- status messages ----------
+    // There is no on-screen status box. Messages go to the browser console
+    // (errors always, progress only with ?debug in the URL) and to the LIVE button's tooltip.
     function showStatus(message, level = "notice") {
-      if (level === "debug" && !DEBUG) return;
-      statusEl.textContent = message;
-      statusEl.hidden = false;
+      if (level === "error") console.warn("[GPS]", message);
+      else if (DEBUG) console.log("[GPS]", message);
+      if (level !== "debug") button.title = message;
     }
     function clearStatus() {
-      statusEl.textContent = "";
-      statusEl.hidden = true;
+      button.removeAttribute("title");
     }
 
     // ---------- GitHub helpers ----------
@@ -178,9 +233,9 @@
         "X-GitHub-Api-Version": "2022-11-28"
       };
     }
-    async function ghFetch(url, options = {}) {
+    async function ghFetch(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         return await fetch(url, {
           ...options,
@@ -212,33 +267,47 @@
       for (const byte of bytes) binary += String.fromCharCode(byte);
       return btoa(binary);
     }
-    async function writeLive(enabled, id) {
-      const content = base64Utf8(JSON.stringify({ live: enabled, id }, null, 2) + "\n");
+    // Create or update one file. shaBox (optional) remembers the file's SHA between saves so a repeated save
+    // needs one request instead of two; it is dropped whenever GitHub says it is stale.
+    async function putJsonFile(path, text, message, shaBox, timeoutMs = FETCH_TIMEOUT_MS) {
+      const content = base64Utf8(text);
       const maxAttempts = 5;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        let sha = null;
-        const getResponse = await ghFetch(readUrl(LIVE_PATH, `-${attempt}`), { headers: headers(false) });
-        if (getResponse.ok) {
-          sha = (await getResponse.json()).sha || null;
-          if (!sha) throw new Error("GitHub did not return a SHA for the live file.");
-        } else if (getResponse.status !== 404) {
-          throw await httpError(getResponse, LIVE_PATH);
+        let sha = shaBox && attempt === 1 ? shaBox.sha : null;
+        if (!sha) {
+          const getResponse = await ghFetch(readUrl(path, `-${attempt}`), { headers: headers(false) });
+          if (getResponse.ok) {
+            sha = (await getResponse.json()).sha || null;
+            if (!sha) throw new Error(`GitHub did not return a SHA for ${path}.`);
+          } else if (getResponse.status !== 404) {
+            throw await httpError(getResponse, path);
+          }
         }
-        const body = { message: `LIVE ${enabled ? "ON" : "OFF"}`, content, branch: BRANCH };
+        const body = { message, content, branch: BRANCH };
         if (sha) body.sha = sha;
-        const putResponse = await ghFetch(fileUrl(LIVE_PATH), {
+        const putResponse = await ghFetch(fileUrl(path), {
           method: "PUT",
           headers: { ...headers(false), "Content-Type": "application/json" },
           body: JSON.stringify(body)
-        });
-        if (putResponse.ok) return;
-        if ((putResponse.status === 409 || putResponse.status >= 500) && attempt < maxAttempts) {
+        }, timeoutMs);
+        if (putResponse.ok) {
+          if (shaBox) {
+            try { shaBox.sha = (await putResponse.json()).content.sha || null; } catch (_) { shaBox.sha = null; }
+          }
+          return;
+        }
+        if (shaBox) shaBox.sha = null;
+        const retryable = putResponse.status === 409 || putResponse.status === 422 || putResponse.status >= 500;
+        if (retryable && attempt < maxAttempts) {
           await new Promise(resolve => setTimeout(resolve, Math.min(250 * 2 ** (attempt - 1), 2500)));
           continue;
         }
-        throw await httpError(putResponse, LIVE_PATH);
+        throw await httpError(putResponse, path);
       }
-      throw new Error("Could not update the live file.");
+      throw new Error(`Could not update ${path}.`);
+    }
+    function writeLive(enabled, id) {
+      return putJsonFile(LIVE_PATH, JSON.stringify({ live: enabled, id }, null, 2) + "\n", `LIVE ${enabled ? "ON" : "OFF"}`, null);
     }
 
     // ---------- errors ----------
@@ -252,7 +321,9 @@
     function relock(message) {
       token = "";
       stopLocal();
+      stopRecordingLocal();          // unsaved points stay in memory and are saved after you unlock again
       button.disabled = true;
+      trackButton.disabled = true;
       lockError.textContent = message;
       lockEl.hidden = false;
       tokenInput.focus();
@@ -281,13 +352,24 @@
             map = new google.maps.Map($("map"), {
               center: { lat: 3.1390, lng: 101.6869 },
               zoom: 12,
+              // No on-screen map buttons (zoom +/-, street view, map type, fullscreen, rotate).
+              // Pinch / scroll / double-tap still zoom.
+              disableDefaultUI: true,
+              zoomControl: false,
+              cameraControl: false,
+              rotateControl: false,
               mapTypeControl: false,
               streetViewControl: false,
               fullscreenControl: false,
-              clickableIcons: false,
+              // Place names and icons are clickable and open Google's own info popup.
+              clickableIcons: true,
               gestureHandling: "greedy",
               keyboardShortcuts: false
             });
+            // Do not stop the click (no e.stop()): Google then shows its normal place popup.
+            // While you are looking at a place the map must not jump back to the tracker.
+            map.addListener("click", event => { followPaused = Boolean(event && event.placeId); });
+            map.addListener("dragstart", () => { followPaused = true; });
             resolve();
           } catch (error) {
             reject(error);
@@ -304,13 +386,213 @@
     function updateMarker(lat, lng) {
       const position = { lat, lng };
       if (!marker) {
-        marker = new google.maps.Marker({ map, position, title: "Current GPS location", optimized: false });
+        marker = new google.maps.Marker({ map, position, title: "Current GPS location", optimized: false, zIndex: 1000 });
+        // Tapping the red marker makes the map follow the tracker again.
+        marker.addListener("click", () => { followPaused = false; map.panTo(marker.getPosition()); });
         map.setCenter(position);
         map.setZoom(16);
       } else {
         marker.setPosition(position);
-        map.panTo(position);
+        if (!followPaused) map.panTo(position);
       }
+    }
+
+    // ---------- footsteps ----------
+    // A footprint, toe pointing up: forefoot + heel. The left foot is the mirror image of the right foot.
+    const FOOT = [
+      ["M", -3.6, -4.5],
+      ["C", -3.8, -8.5, -1.8, -11, 0.6, -11],
+      ["C", 3.4, -11, 4.6, -8, 4.2, -4.2],
+      ["C", 3.9, -1.8, 3.4, 0, 2.2, 1.4],
+      ["C", 1, 2.8, -1.8, 2.6, -2.8, 0.8],
+      ["C", -3.4, -0.4, -3.5, -2.6, -3.6, -4.5], ["Z"],
+      ["M", -2.4, 5.2],
+      ["C", -2.6, 3.8, -1.4, 3.4, 0.4, 3.4],
+      ["C", 2.2, 3.4, 3, 4.2, 3, 5.6],
+      ["C", 3, 7.8, 1.8, 9.4, 0.2, 9.4],
+      ["C", -1.4, 9.4, -2.2, 7.4, -2.4, 5.2], ["Z"]
+    ];
+    function footPath(mirror) {
+      const sign = mirror ? -1 : 1;
+      return FOOT.map(([cmd, ...nums]) => cmd + nums.map((v, i) => (i % 2 === 0 ? v * sign : v)).join(" ")).join("");
+    }
+    const FOOT_PATH_RIGHT = footPath(false);
+    const FOOT_PATH_LEFT = footPath(true);
+
+    function footIcon(left, rotation) {
+      return {
+        path: left ? FOOT_PATH_LEFT : FOOT_PATH_RIGHT,
+        fillColor: "#0b57d0",
+        fillOpacity: 0.92,
+        strokeColor: "#ffffff",
+        strokeOpacity: 0.95,
+        strokeWeight: 1,
+        scale: STEP_SCALE,
+        rotation
+      };
+    }
+    function distanceM(lat1, lng1, lat2, lng2) {
+      const r = Math.PI / 180;
+      const dx = (lng2 - lng1) * r * Math.cos(((lat1 + lat2) / 2) * r);
+      const dy = (lat2 - lat1) * r;
+      return Math.hypot(dx, dy) * 6371000;
+    }
+    function bearingDeg(lat1, lng1, lat2, lng2) {
+      const r = Math.PI / 180;
+      const y = Math.sin((lng2 - lng1) * r) * Math.cos(lat2 * r);
+      const x = Math.cos(lat1 * r) * Math.sin(lat2 * r) - Math.sin(lat1 * r) * Math.cos(lat2 * r) * Math.cos((lng2 - lng1) * r);
+      return (Math.atan2(y, x) / r + 360) % 360;
+    }
+    function addFootstep(lat, lng, course) {
+      let heading = lastHeading;
+      let known = false;
+      if (lastStep && distanceM(lastStep.lat, lastStep.lng, lat, lng) >= STEP_TURN_MIN_M) {
+        heading = bearingDeg(lastStep.lat, lastStep.lng, lat, lng);   // walking direction from the last two fixes
+        known = true;
+      } else if (!lastStep && Number.isFinite(course)) {
+        heading = course;
+      }
+      const left = footsteps.length % 2 === 0;                       // alternate left / right foot
+      // The very first print has no direction yet: turn it once the second fix shows where you went.
+      if (known && footsteps.length === 1 && !footsteps[0].aimed) {
+        footsteps[0].marker.setIcon(footIcon(footsteps[0].left, heading));
+        footsteps[0].aimed = true;
+      }
+      const stepMarker = new google.maps.Marker({
+        map,
+        position: { lat, lng },
+        icon: footIcon(left, heading),
+        clickable: false,          // taps pass through to the map, so place names stay clickable
+        optimized: true,
+        zIndex: 1
+      });
+      footsteps.push({ marker: stepMarker, left, aimed: footsteps.length > 0 });
+      lastStep = { lat, lng };
+      lastHeading = heading;
+    }
+    function clearFootsteps() {
+      for (const step of footsteps) step.marker.setMap(null);
+      footsteps = [];
+      lastStep = null;
+      lastHeading = 0;
+    }
+
+    // ---------- track recording and datalog ----------
+    function setTrackState(on) {
+      trackButton.classList.toggle("rec", on);
+      trackButton.setAttribute("aria-pressed", String(on));
+    }
+    function refreshWarn() {
+      trackButton.classList.toggle("warn", failing.size > 0);
+    }
+    function newTrack() {
+      return {
+        name: "", path: "", started: new Date().toISOString(), ended: null,
+        points: [], version: 0, savedVersion: -1, shaBox: { sha: null }, timer: null, retries: 0
+      };
+    }
+    function pickPoint(data) {
+      const point = {};
+      for (const key of POINT_FIELDS) {
+        const v = data[key];
+        point[key] = (typeof v === "number" && Number.isFinite(v)) || (typeof v === "string" && v.length <= 32) ? v : null;
+      }
+      return point;
+    }
+    function trackText(t) {
+      const head = JSON.stringify({ name: t.name, started: t.started, ended: t.ended, count: t.points.length });
+      return head.slice(0, -1) + ',"points":[\n' + t.points.map(p => JSON.stringify(p)).join(",\n") + "\n]}\n";
+    }
+    async function nextTrackPath() {
+      let highest = 0;
+      const response = await ghFetch(readUrl(TRACK_DIR), { headers: headers(false) });
+      if (response.ok) {
+        const list = await response.json();
+        if (Array.isArray(list)) {
+          for (const item of list) {
+            const m = /^track(\d+)\.json$/.exec((item && item.name) || "");
+            if (m) highest = Math.max(highest, parseInt(m[1], 10));
+          }
+        }
+      } else if (response.status !== 404) {
+        throw await httpError(response, TRACK_DIR);
+      }
+      return `${TRACK_DIR}/track${highest + 1}.json`;
+    }
+    async function doSaveTrack(t) {
+      if (t.points.length === 0 || t.version === t.savedVersion) { pendingTracks.delete(t); return true; }
+      if (!token) return false;                      // locked: saved again after you unlock
+      const version = t.version;
+      try {
+        if (!t.path) {
+          t.path = TRACK_AUTO_NUMBER ? await nextTrackPath() : `${TRACK_DIR}/track1.json`;
+          t.name = t.path.slice(t.path.lastIndexOf("/") + 1).replace(/\.json$/, "");
+        }
+        await putJsonFile(t.path, trackText(t), `Track ${t.name}: ${t.points.length} points`, t.shaBox, TRACK_PUT_TIMEOUT_MS);
+        t.savedVersion = version;
+        t.retries = 0;
+        failing.delete(t);
+        refreshWarn();
+        if (t.version === version) pendingTracks.delete(t);
+        else scheduleTrackSave(t);                   // more points arrived while saving
+        showStatus(`Saved ${t.path} (${t.points.length} points)`, "debug");
+        return true;
+      } catch (error) {
+        failing.add(t);
+        refreshWarn();
+        t.retries++;
+        handleError(error);                          // a rejected token locks the page; other errors go to the console
+        if (!(error && error.status === 401)) {
+          scheduleTrackSave(t, Math.min(60000, TRACK_RETRY_MS * 2 ** Math.min(t.retries - 1, 4)));
+        }
+        return false;
+      }
+    }
+    function queueTrackSave(t) {
+      const job = saveChain.then(() => doSaveTrack(t));   // one save at a time
+      saveChain = job.catch(() => false);
+      return job;
+    }
+    function scheduleTrackSave(t, delay = TRACK_SAVE_MS) {
+      if (t.timer) return;
+      t.timer = setTimeout(() => { t.timer = null; queueTrackSave(t); }, delay);
+    }
+    function flushPendingTracks() {
+      for (const t of pendingTracks) queueTrackSave(t);
+    }
+    function recordPoint(data, lat, lng) {
+      if (!recording || !track) return;
+      const last = track.points[track.points.length - 1];
+      if (last && last.latitude === lat && last.longitude === lng) return;   // same spot: no new footstep
+      if (track.points.length >= MAX_TRACK_POINTS) { stopTracking(); return; }
+      track.points.push(pickPoint(data));
+      track.version++;
+      pendingTracks.add(track);
+      addFootstep(lat, lng, data.course_deg);
+      scheduleTrackSave(track);
+    }
+    function stopRecordingLocal() {
+      if (!recording) return null;
+      recording = false;
+      setTrackState(false);
+      const t = track;
+      t.ended = new Date().toISOString();
+      t.version++;                                   // the end time is part of the file
+      pendingTracks.add(t);
+      clearTimeout(t.timer);
+      t.timer = null;
+      return t;
+    }
+    async function stopTracking() {
+      const t = stopRecordingLocal();
+      if (t) await queueTrackSave(t);
+    }
+    async function startTracking() {
+      if (!liveOn) await startLive();                // no coordinates arrive unless LIVE is on
+      clearFootsteps();                              // the previous footsteps stay until this click
+      track = newTrack();
+      recording = true;
+      setTrackState(true);
     }
 
     // ---------- live session ----------
@@ -347,6 +629,7 @@
       showStatus("Starting LIVE…", "debug");
       await writeLive(true, sessionId);
       liveOn = true;
+      followPaused = false;
       startedAt = Date.now();
       fetchCount = 0;
       setButtonState(true);
@@ -371,6 +654,7 @@
         throw new Error("latest.json contains invalid latitude/longitude.");
       }
       updateMarker(lat, lng);
+      recordPoint(data, lat, lng);
       clearStatus();
       const left = Math.max(0, Math.ceil((MAX_LIVE_MS - (Date.now() - startedAt)) / 1000));
       showStatus(`GPS ${lat.toFixed(6)}, ${lng.toFixed(6)} · fetches ${fetchCount} · ${left}s left`, "debug");
@@ -423,6 +707,8 @@
         lockError.textContent = "";
         lockEl.hidden = true;
         button.disabled = false;
+        trackButton.disabled = false;
+        flushPendingTracks();                        // save anything that could not be saved while locked
       } catch (error) {
         token = "";
         lockError.textContent = describe(error);
@@ -446,12 +732,58 @@
       }
     });
 
+    // ---------- TRACK button: tap = start / stop recording, hold 3 s = clear the footsteps ----------
+    let holdTimer = null;
+    let holdFired = false;
+    let blockClickUntil = 0;
+    trackButton.style.setProperty("--hold", `${CLEAR_HOLD_MS}ms`);
+    function endHold() {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+      trackButton.classList.remove("holding");
+      if (holdFired) {
+        holdFired = false;
+        blockClickUntil = Date.now() + 600;          // the click that follows the release must not toggle recording
+      }
+    }
+    trackButton.addEventListener("pointerdown", event => {
+      if (trackButton.disabled || (event.pointerType === "mouse" && event.button !== 0)) return;
+      clearTimeout(holdTimer);
+      holdFired = false;
+      trackButton.classList.add("holding");
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        holdFired = true;
+        trackButton.classList.remove("holding");
+        clearFootsteps();                            // display only: the saved track files are not touched
+      }, CLEAR_HOLD_MS);
+    });
+    for (const type of ["pointerup", "pointercancel", "pointerleave"]) trackButton.addEventListener(type, endHold);
+    trackButton.addEventListener("contextmenu", event => event.preventDefault());
+    trackButton.addEventListener("click", async () => {
+      if (Date.now() < blockClickUntil) return;
+      if (recording) { stopTracking(); return; }     // stopping never waits for the save to finish
+      if (busy) return;
+      busy = true;
+      trackButton.disabled = true;
+      try {
+        await startTracking();
+      } catch (error) {
+        handleError(error);
+      } finally {
+        busy = false;
+        if (token) trackButton.disabled = false;
+      }
+    });
+
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible" && liveOn && !polling) {
         clearTimeout(pollTimer);
         pollLatest();
       }
+      if (document.visibilityState === "hidden") flushPendingTracks();   // iOS may suspend the page in the background
     });
+    window.addEventListener("pagehide", flushPendingTracks);
 
     setButtonState(false);
     try { checkConfig(); } catch (error) { lockError.textContent = error.message; unlockBtn.disabled = true; }
