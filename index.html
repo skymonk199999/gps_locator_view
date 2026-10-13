@@ -3,7 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#ffffff">
+  <meta name="theme-color" content="#e8eaed">
+  <!-- Full screen when opened from the iPhone Home Screen (Share > Add to Home Screen). -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="GPS Map">
   <!-- If the map ever fails to load, delete this CSP line first to rule it out. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src https: data: blob:; font-src https://fonts.gstatic.com data:; connect-src https://api.github.com https://*.googleapis.com https://*.gstatic.com https://*.google.com; worker-src blob:; frame-src https://*.google.com; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>GPS Live Map</title>
@@ -12,7 +17,21 @@
     * { box-sizing: border-box; }
     html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; }
     body { position: fixed; inset: 0; background: #e8eaed; }
-    #map { position: fixed; inset: 0; width: 100%; height: 100%; height: 100dvh; }
+    /* The map fills the whole screen, including the area behind the status bar / Dynamic Island. */
+    #map { position: fixed; inset: 0; }
+    /* Home Screen mode only: a faint shade so the white clock / battery icons stay readable on a light map. */
+    #topShade { display: none; }
+    @media (display-mode: standalone) {
+      #topShade {
+        display: block;
+        position: fixed;
+        z-index: 500;
+        top: 0; left: 0; right: 0;
+        height: calc(env(safe-area-inset-top, 0px) + 26px);
+        background: linear-gradient(rgba(0, 0, 0, .38), rgba(0, 0, 0, 0));
+        pointer-events: none;
+      }
+    }
     #liveButton {
       position: fixed;
       z-index: 1000;
@@ -35,7 +54,7 @@
       -webkit-tap-highlight-color: transparent;
     }
     /* LIVE: red at 70% transparency (alpha .30). The text shadow keeps the label readable on the map. */
-    #liveButton.live { background: rgba(220, 35, 45, 1); color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.65); }
+    #liveButton.live { background: rgba(220, 35, 45, .30); color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.65); }
     #liveButton:disabled { opacity: .6; }
     #lock {
       position: fixed;
@@ -77,6 +96,7 @@
 </head>
 <body>
   <div id="map" aria-label="Live GPS map"></div>
+  <div id="topShade" aria-hidden="true"></div>
   <button id="liveButton" type="button" disabled>LIVE</button>
 
   <div id="lock" role="dialog" aria-modal="true" aria-labelledby="lockTitle">
@@ -93,9 +113,9 @@
   (() => {
     "use strict";
 
-    // These two values are NOT secrets. Without a valid token the private repo reveals nothing.
-    const DATA_OWNER = "skymonk199999";
-    const DATA_REPO = "gps_locator";
+    // No repository names anywhere in this file or in the URL. After you enter the token the page
+    // asks GitHub which repositories the token can reach and uses the one that contains
+    // config/maps.json. (A token limited to the private repo resolves to it immediately.)
     const BRANCH = "main";
 
     const LIVE_PATH = "gps/live.json";
@@ -115,6 +135,8 @@
     const lockError = $("lockError");
 
     let token = "";                 // kept in memory only; never written to storage
+    let dataOwner = "";             // found at unlock time, never hard-coded
+    let dataRepo = "";
     let map = null;
     let marker = null;
     let followPaused = false;       // true while you look around or inspect a place
@@ -141,14 +163,9 @@
     }
 
     // ---------- GitHub helpers ----------
-    function validName(text) { return /^[A-Za-z0-9._-]+$/.test(text) && !text.startsWith("YOUR_"); }
-    function checkConfig() {
-      if (!validName(DATA_OWNER) || !validName(DATA_REPO)) {
-        throw new Error("Edit DATA_OWNER and DATA_REPO in index.html first.");
-      }
-    }
+    function validName(text) { return typeof text === "string" && /^[A-Za-z0-9._-]+$/.test(text); }
     function fileUrl(path) {
-      return `https://api.github.com/repos/${encodeURIComponent(DATA_OWNER)}/${encodeURIComponent(DATA_REPO)}/contents/${path}`;
+      return `https://api.github.com/repos/${encodeURIComponent(dataOwner)}/${encodeURIComponent(dataRepo)}/contents/${path}`;
     }
     function readUrl(path, tag = "") {
       return `${fileUrl(path)}?ref=${encodeURIComponent(BRANCH)}&_=${Date.now()}${tag}`;
@@ -187,6 +204,31 @@
       const response = await ghFetch(readUrl(path), { headers: headers(true) });
       if (!response.ok) throw await httpError(response, path);
       return JSON.parse(await response.text());
+    }
+    // Finds the private data repository without any name in this file: ask GitHub which
+    // repositories the token can reach and pick the one that contains config/maps.json.
+    // Returns the parsed config/maps.json and sets dataOwner / dataRepo.
+    async function locateDataRepo() {
+      // Most recently pushed first: the data repo is written to on every LIVE session.
+      const response = await ghFetch("https://api.github.com/user/repos?per_page=100&sort=pushed", { headers: headers(false) });
+      if (!response.ok) throw await httpError(response, "repository list");
+      const repos = await response.json();
+      if (!Array.isArray(repos)) throw new Error("Unexpected answer from GitHub.");
+      for (const repo of repos.slice(0, 30)) {
+        const owner = repo && repo.owner && repo.owner.login;
+        const name = repo && repo.name;
+        if (!validName(owner) || !validName(name)) continue;
+        dataOwner = owner;
+        dataRepo = name;
+        try {
+          return await readJson(MAPS_CONFIG_PATH);
+        } catch (error) {
+          if (error.status !== 404 && error.status !== 403) throw error;   // not this repo: try the next one
+        }
+      }
+      dataOwner = "";
+      dataRepo = "";
+      throw new Error("This token cannot reach a repository that contains config/maps.json.");
     }
     function base64Utf8(text) {
       const bytes = new TextEncoder().encode(text);
@@ -228,11 +270,13 @@
       if (error && error.name === "AbortError") return "Network timeout. Check your connection.";
       if (error && error.status === 401) return "Token rejected (wrong or expired).";
       if (error && (error.status === 403 || error.status === 429)) return "GitHub refused the request (token permissions or rate limit).";
-      if (error && error.status === 404) return "Not found. Check the repository name, config/maps.json, and that the token can access the repository.";
+      if (error && error.status === 404) return "Not found. Check that the token can access the private data repository and that it contains config/maps.json.";
       return (error && error.message) || String(error);
     }
     function relock(message) {
       token = "";
+      dataOwner = "";
+      dataRepo = "";
       stopLocal();
       button.disabled = true;
       lockError.textContent = message;
@@ -410,9 +454,8 @@
       unlockBtn.disabled = true;
       lockError.textContent = "Checking…";
       try {
-        checkConfig();
         token = value;
-        const config = await readJson(MAPS_CONFIG_PATH);
+        const config = await locateDataRepo();
         const key = typeof config.key === "string" ? config.key.trim() : "";
         if (!/^[A-Za-z0-9_-]{30,80}$/.test(key)) throw new Error("config/maps.json does not contain a valid Maps key.");
         await loadGoogleMaps(key);
@@ -421,6 +464,8 @@
         button.disabled = false;
       } catch (error) {
         token = "";
+        dataOwner = "";
+        dataRepo = "";
         lockError.textContent = describe(error);
       } finally {
         unlockBtn.disabled = false;
@@ -450,7 +495,6 @@
     });
 
     setButtonState(false);
-    try { checkConfig(); } catch (error) { lockError.textContent = error.message; unlockBtn.disabled = true; }
   })();
   </script>
 </body>
