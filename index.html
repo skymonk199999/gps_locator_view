@@ -72,6 +72,7 @@
       gap: 8px;
     }
     .fab.mid { flex: 1 1 0; min-width: 0; padding: 6px 2px; font-size: 11px; font-weight: 700; letter-spacing: 0; line-height: 1.15; overflow-wrap: normal; word-break: normal; overflow: hidden; }
+    #streetButton[hidden] { display: none; }
     .fab.mid.on { background: rgba(26, 115, 232, .55); color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.5); }
     #liveButton, #trackButton { isolation: isolate; overflow: hidden; }
     #layersPanel {
@@ -169,7 +170,7 @@
   <div id="bar">
     <button id="liveButton" class="fab" type="button" disabled aria-label="Live: tap to start or stop, hold 5 seconds for no time limit">LIVE</button>
     <button id="layersButton" class="fab mid" type="button" disabled aria-expanded="false">Layers</button>
-    <button id="streetButton" class="fab mid" type="button" disabled>Street View</button>
+    <button id="streetButton" class="fab mid" type="button" hidden>Exit Street View</button>
     <button id="measureButton" class="fab mid" type="button" disabled>Measure</button>
     <button id="trackButton" class="fab" type="button" disabled aria-pressed="false" aria-label="Track: tap to record footsteps, hold 3 seconds to clear them">TRACK</button>
   </div>
@@ -374,7 +375,7 @@
       stopRecordingLocal();          // unsaved points stay in memory and are saved after you unlock again
       button.disabled = true;
       trackButton.disabled = true;
-      layersButton.disabled = streetButton.disabled = measureButton.disabled = true;
+      layersButton.disabled = measureButton.disabled = true;
       lockError.textContent = message;
       lockEl.hidden = false;
       tokenInput.focus();
@@ -412,7 +413,7 @@
     const streetButton = $("streetButton");
     const measureButton = $("measureButton");
     const layersPanel = $("layersPanel");
-    let toolMode = "none";            // "none" | "street" | "measure"
+    let toolMode = "none";            // "none" | "measure"
     let measurePts = [], measureLine = null, measureDots = [];
     function fmtDistance(m) { return m >= 1000 ? (m / 1000).toFixed(2) + " km" : Math.round(m) + " m"; }
     function clearMeasure() {
@@ -424,9 +425,7 @@
     }
     function setToolMode(mode) {
       toolMode = mode;
-      streetButton.classList.toggle("on", mode === "street");
       measureButton.classList.toggle("on", mode === "measure");
-      streetButton.textContent = mode === "street" ? "Tap the map" : "Street View";
       measureButton.textContent = "Measure";
       if (mode !== "measure") clearMeasure();
       if (map) map.setOptions({ clickableIcons: mode === "none", draggableCursor: mode === "none" ? null : "crosshair" });
@@ -458,33 +457,23 @@
       });
       const closeLayers = () => { layersPanel.hidden = true; layersButton.classList.remove("on"); layersButton.setAttribute("aria-expanded", "false"); };
 
+      // Street View: Google's own little person (right side of the map). Drag it onto a blue street and drop it.
+      // The panorama's own close button would sit under the status bar, so the bottom row gets "Exit Street View".
       const streetView = map.getStreetView();
-      streetView.setOptions({ enableCloseButton: true, addressControl: false });
-      const svService = new gmaps.StreetViewService();
-      let svTimer = null;
-      streetButton.addEventListener("click", () => setToolMode(toolMode === "street" ? "none" : "street"));
+      streetView.setOptions({ enableCloseButton: false, addressControl: true, fullscreenControl: false });
+      streetView.addListener("visible_changed", () => {
+        const on = streetView.getVisible();
+        streetButton.hidden = !on;
+        if (on) { closeLayers(); setToolMode("none"); }
+      });
+      streetButton.addEventListener("click", () => streetView.setVisible(false));
       measureButton.addEventListener("click", () => setToolMode(toolMode === "measure" ? "none" : "measure"));
 
       map.addListener("click", event => {
         closeLayers();
-        if (toolMode === "none" || !event || !event.latLng) return;
+        if (toolMode !== "measure" || !event || !event.latLng) return;
         if (event.stop) event.stop();                 // no place popup while a tool is active
         const lat = event.latLng.lat(), lng = event.latLng.lng();
-        if (toolMode === "street") {
-          svService.getPanorama({ location: { lat, lng }, radius: 75 }, (data, status) => {
-            if (status === "OK" && data && data.location) {
-              streetView.setPosition(data.location.latLng);
-              streetView.setPov({ heading: 0, pitch: 0 });
-              streetView.setVisible(true);
-              setToolMode("none");
-            } else {
-              streetButton.textContent = "No Street View here";
-              clearTimeout(svTimer);
-              svTimer = setTimeout(() => { if (toolMode === "street") streetButton.textContent = "Tap the map"; }, 2500);
-            }
-          });
-          return;
-        }
         measurePts.push({ lat, lng });
         if (!measureLine) measureLine = new gmaps.Polyline({ map, strokeColor: "#1a73e8", strokeWeight: 3, clickable: false });
         measureLine.setPath(measurePts);
@@ -519,7 +508,7 @@
             map = new google.maps.Map($("map"), {
               center: { lat: 3.1390, lng: 101.6869 },
               zoom: 12,
-              // No on-screen map buttons (zoom +/-, street view, map type, fullscreen, rotate).
+              // No zoom +/-, map type, fullscreen or rotate buttons; only Google's Street View person (right side).
               // Pinch / scroll / double-tap still zoom.
               disableDefaultUI: true,
               zoomControl: false,
@@ -527,7 +516,8 @@
               rotateControl: false,
               fullscreenControl: false,
               mapTypeControl: false,
-              streetViewControl: false,
+              streetViewControl: true,
+              streetViewControlOptions: { position: google.maps.ControlPosition.RIGHT_CENTER },
               scaleControl: false,
               // Place names and icons are clickable and open Google's own info popup.
               clickableIcons: true,
@@ -883,7 +873,7 @@
         lockEl.hidden = true;
         button.disabled = false;
         trackButton.disabled = false;
-        layersButton.disabled = streetButton.disabled = measureButton.disabled = false;
+        layersButton.disabled = measureButton.disabled = false;
         flushPendingTracks();                        // save anything that could not be saved while locked
       } catch (error) {
         token = "";
