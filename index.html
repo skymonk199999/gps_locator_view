@@ -16,20 +16,14 @@
   <style>
     :root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     * { box-sizing: border-box; }
-    html, body {
-      width: 100%;
-      height: 100%;
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-      overscroll-behavior: none;
-      background: #e8eaed;
-    }
-    body { position: fixed; inset: 0; -webkit-text-size-adjust: 100%; }
-    /* Edge to edge: pinned to all four screen edges (no fixed height), so with viewport-fit=cover it also
-       fills the status bar, Dynamic Island and home indicator areas. */
-    #map { position: fixed; inset: 0; width: 100%; height: 100%; }
+    html, body { margin: 0; padding: 0; overflow: hidden; overscroll-behavior: none; background: #e8eaed; -webkit-text-size-adjust: 100%; }
+    /* Edge to edge. iPhone Safari / home-screen mode report a "100%" height that stops above the home indicator,
+       so the map is sized to the LARGEST viewport (lvh) and, as a backup, by script (see fitMap) to the real screen.
+       Top, bottom and sides all get map content; nothing is just shifted. */
+    #map { position: fixed; top: 0; left: 0; width: 100%; height: 100vh; height: 100lvh; }
     #mapProblem { position: fixed; left: 12px; right: 12px; top: calc(env(safe-area-inset-top, 0px) + 12px); z-index: 2500; display: none; padding: 12px 14px; border-radius: 12px; background: #fff3cd; color: #5c3b00; font: 14px/1.4 system-ui, sans-serif; box-shadow: 0 2px 10px rgba(0,0,0,.3); }
+    .toolBtn { margin: 10px 0 0 10px; padding: 0 14px; height: 40px; border: 0; border-radius: 2px; background: #fff; color: #333; font: 500 14px Roboto, Arial, sans-serif; box-shadow: 0 1px 4px rgba(0,0,0,.3); cursor: pointer; }
+    .toolBtn.on { background: #1a73e8; color: #fff; }
     #mapProblem.show { display: block; }
     #mapProblem button { margin-left: 8px; }
     /* The status bar text is always white in full-screen mode; this soft shade keeps it readable on a light map.
@@ -345,6 +339,57 @@
       button.classList.toggle("live", on);
       button.setAttribute("aria-pressed", String(on));
     }
+    // Keep the map exactly as tall as the real screen (covers status bar and home indicator areas).
+    function fitMap() {
+      const el = $("map");
+      let h = window.innerHeight;
+      if (window.navigator.standalone && window.screen) {
+        const portrait = window.innerHeight >= window.innerWidth;
+        h = Math.max(h, portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height));
+      }
+      el.style.height = h + "px";
+    }
+    window.addEventListener("resize", fitMap);
+    window.addEventListener("orientationchange", () => setTimeout(fitMap, 300));
+    fitMap();
+
+    // Upper-left tool stack. The first (empty) item is as tall as the status bar / Dynamic Island so the
+    // Google controls start below it while the map itself still draws underneath.
+    function addTopLeftTools() {
+      const pos = google.maps.ControlPosition.TOP_LEFT;
+      const spacer = document.createElement("div");
+      spacer.style.height = "env(safe-area-inset-top, 0px)";
+      spacer.style.width = "1px";
+      spacer.index = -1000;
+      map.controls[pos].push(spacer);
+      // Measure distance (Google's own app has it; the web API does not, so this is a small clone).
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "Measure";
+      btn.className = "toolBtn";
+      btn.index = 1000;
+      map.controls[pos].push(btn);
+      let on = false, pts = [], line = null, dots = [];
+      const fmt = m => (m >= 1000 ? (m / 1000).toFixed(2) + " km" : Math.round(m) + " m");
+      const total = () => { let t = 0; for (let i = 1; i < pts.length; i++) t += distanceM(pts[i - 1].lat, pts[i - 1].lng, pts[i].lat, pts[i].lng); return t; };
+      const clear = () => { pts = []; if (line) line.setMap(null); line = null; dots.forEach(d => d.setMap(null)); dots = []; };
+      btn.addEventListener("click", () => {
+        on = !on;
+        btn.classList.toggle("on", on);
+        map.setOptions({ clickableIcons: !on, draggableCursor: on ? "crosshair" : null });
+        if (!on) clear();
+        btn.textContent = on ? "Measure: tap map" : "Measure";
+      });
+      map.addListener("click", event => {
+        if (!on || !event || !event.latLng) return;
+        pts.push({ lat: event.latLng.lat(), lng: event.latLng.lng() });
+        if (!line) line = new google.maps.Polyline({ map, strokeColor: "#1a73e8", strokeWeight: 3, clickable: false });
+        line.setPath(pts);
+        dots.push(new google.maps.Marker({ map, position: pts[pts.length - 1], clickable: false, icon: { path: google.maps.SymbolPath.CIRCLE, scale: 4, fillColor: "#fff", fillOpacity: 1, strokeColor: "#1a73e8", strokeWeight: 2 } }));
+        btn.textContent = "Measure: " + fmt(total()) + " (tap here to end)";
+      });
+    }
+
     const MAP_IDLE_TIMEOUT_MS = 15000;
     const cspBlocked = [];
     document.addEventListener("securitypolicyviolation", e => {
@@ -374,9 +419,13 @@
               zoomControl: false,
               cameraControl: false,
               rotateControl: false,
-              mapTypeControl: false,
-              streetViewControl: false,
               fullscreenControl: false,
+              // Real Google controls, upper left: Map / Satellite (layers) and the Street View pegman.
+              mapTypeControl: true,
+              mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_LEFT },
+              streetViewControl: true,
+              streetViewControlOptions: { position: google.maps.ControlPosition.TOP_LEFT },
+              scaleControl: true,
               // Place names and icons are clickable and open Google's own info popup.
               clickableIcons: true,
               gestureHandling: "greedy",
@@ -386,6 +435,7 @@
             // While you are looking at a place the map must not jump back to the tracker.
             map.addListener("click", event => { followPaused = Boolean(event && event.placeId); });
             map.addListener("dragstart", () => { followPaused = true; });
+            addTopLeftTools();
             let idled = false;
             map.addListener("idle", () => { idled = true; hideMapProblem(); });
             const box = $("map").getBoundingClientRect();
