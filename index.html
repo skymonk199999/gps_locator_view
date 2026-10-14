@@ -22,8 +22,6 @@
        Top, bottom and sides all get map content; nothing is just shifted. */
     #map { position: fixed; top: 0; left: 0; width: 100%; height: 100vh; height: 100lvh; }
     #mapProblem { position: fixed; left: 12px; right: 12px; top: calc(env(safe-area-inset-top, 0px) + 12px); z-index: 2500; display: none; padding: 12px 14px; border-radius: 12px; background: #fff3cd; color: #5c3b00; font: 14px/1.4 system-ui, sans-serif; box-shadow: 0 2px 10px rgba(0,0,0,.3); }
-    .toolBtn { margin: 10px 0 0 10px; padding: 0 14px; height: 40px; border: 0; border-radius: 2px; background: #fff; color: #333; font: 500 14px Roboto, Arial, sans-serif; box-shadow: 0 1px 4px rgba(0,0,0,.3); cursor: pointer; }
-    .toolBtn.on { background: #1a73e8; color: #fff; }
     #mapProblem.show { display: block; }
     #mapProblem button { margin-left: 8px; }
     /* The status bar text is always white in full-screen mode; this soft shade keeps it readable on a light map.
@@ -39,12 +37,11 @@
       pointer-events: none;
     }
     .fab {
-      position: fixed;
-      z-index: 1000;
-      bottom: max(18px, env(safe-area-inset-bottom));
-      min-width: 112px;
+      position: relative;
+      flex: 0 0 auto;
+      min-width: 84px;
       min-height: 48px;
-      padding: 12px 20px;
+      padding: 12px 10px;
       border: 1px solid rgba(255,255,255,.35);
       border-radius: 999px;
       background: rgba(128, 128, 128, .30);
@@ -63,12 +60,44 @@
       -webkit-touch-callout: none;
     }
     .fab:disabled { opacity: .6; }
-    #liveButton { left: max(16px, env(safe-area-inset-left)); }
-    #trackButton { right: max(16px, env(safe-area-inset-right)); isolation: isolate; overflow: hidden; }
+    /* One bottom row: LIVE | Layers | Street View | Measure | TRACK. Same distance from the screen edge as before. */
+    #bar {
+      position: fixed;
+      z-index: 1000;
+      left: max(12px, env(safe-area-inset-left));
+      right: max(12px, env(safe-area-inset-right));
+      bottom: max(18px, env(safe-area-inset-bottom));
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
+    }
+    .fab.mid { flex: 1 1 0; min-width: 0; padding: 6px 2px; font-size: 11px; font-weight: 700; letter-spacing: 0; line-height: 1.15; overflow-wrap: normal; word-break: normal; overflow: hidden; }
+    .fab.mid.on { background: rgba(26, 115, 232, .55); color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.5); }
+    #liveButton, #trackButton { isolation: isolate; overflow: hidden; }
+    #layersPanel {
+      position: fixed;
+      z-index: 1100;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: calc(max(18px, env(safe-area-inset-bottom)) + 48px + 10px);
+      width: min(360px, calc(100% - 24px));
+      padding: 10px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, .94);
+      box-shadow: 0 4px 18px rgba(0,0,0,.35);
+      font: 14px/1.3 system-ui, -apple-system, sans-serif;
+      color: #222;
+    }
+    #layersPanel[hidden] { display: none; }
+    #layersPanel h2 { margin: 2px 4px 6px; font-size: 12px; font-weight: 700; color: #666; text-transform: uppercase; letter-spacing: .06em; }
+    #layersPanel .row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    #layersPanel .row:last-child { margin-bottom: 0; }
+    #layersPanel button { flex: 1 1 28%; min-height: 40px; border: 1px solid #ccc; border-radius: 10px; background: #fff; font: inherit; color: inherit; }
+    #layersPanel button.on { background: #1a73e8; border-color: #1a73e8; color: #fff; font-weight: 700; }
     /* LIVE / TRACK switched on: red at 70% transparency (alpha .30). The text shadow keeps the label readable. */
     #liveButton.live, #trackButton.rec { background: rgba(220, 35, 45, .30); color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.65); }
     /* Progress fill while TRACK is held down for the 3-second "clear footsteps" press. */
-    #trackButton::before {
+    #liveButton::before, #trackButton::before {
       content: "";
       position: absolute;
       inset: 0;
@@ -78,7 +107,7 @@
       transform-origin: left center;
       transition: transform .2s ease-out;
     }
-    #trackButton.holding::before { transform: scaleX(1); transition: transform var(--hold, 3000ms) linear; }
+    #liveButton.holding::before, #trackButton.holding::before { transform: scaleX(1); transition: transform var(--hold, 3000ms) linear; }
     /* Orange ring: the track file could not be saved yet. It keeps retrying and the ring disappears once saved. */
     #trackButton.warn { box-shadow: 0 0 0 3px rgba(255, 170, 0, .95), 0 3px 14px rgba(0,0,0,.28); }
     #lock {
@@ -123,8 +152,27 @@
   <div id="map" aria-label="Live GPS map"></div>
   <div id="topScrim" aria-hidden="true"></div>
   <div id="mapProblem" role="alert"><span id="mapProblemText"></span><button id="mapProblemReload" type="button">Reload</button></div>
-  <button id="liveButton" class="fab" type="button" disabled>LIVE</button>
-  <button id="trackButton" class="fab" type="button" disabled aria-pressed="false" aria-label="Track: tap to record footsteps, hold 3 seconds to clear them">TRACK</button>
+  <div id="layersPanel" hidden>
+    <h2>Map type</h2>
+    <div class="row">
+      <button id="layerRoad" type="button" class="on">Default</button>
+      <button id="layerSat" type="button">Satellite</button>
+      <button id="layerTerrain" type="button">Terrain</button>
+    </div>
+    <h2>Map details</h2>
+    <div class="row">
+      <button id="layerTraffic" type="button">Traffic</button>
+      <button id="layerTransit" type="button">Transit</button>
+      <button id="layerBike" type="button">Cycling</button>
+    </div>
+  </div>
+  <div id="bar">
+    <button id="liveButton" class="fab" type="button" disabled aria-label="Live: tap to start or stop, hold 5 seconds for no time limit">LIVE</button>
+    <button id="layersButton" class="fab mid" type="button" disabled aria-expanded="false">Layers</button>
+    <button id="streetButton" class="fab mid" type="button" disabled>Street View</button>
+    <button id="measureButton" class="fab mid" type="button" disabled>Measure</button>
+    <button id="trackButton" class="fab" type="button" disabled aria-pressed="false" aria-label="Track: tap to record footsteps, hold 3 seconds to clear them">TRACK</button>
+  </div>
 
   <div id="lock" role="dialog" aria-modal="true" aria-labelledby="lockTitle">
     <form id="lockForm" autocomplete="off">
@@ -150,6 +198,7 @@
     const MAPS_CONFIG_PATH = "config/maps.json";   // {"key": "<Google Maps API key>"} in the private repo
     const POLL_MS = 2000;
     const MAX_LIVE_MS = 60000;
+    const LIVE_HOLD_MS = 5000;     // hold LIVE this long: no 60 s limit until you tap LIVE again
     const FETCH_TIMEOUT_MS = 8000;
 
     // TRACK (footsteps + datalog)
@@ -185,6 +234,7 @@
     let startedAt = 0;
     let pollTimer = null;
     let stopTimer = null;
+    let liveUnlimited = false;
     let polling = false;
     let stopping = false;
     let busy = false;
@@ -305,7 +355,9 @@
       throw new Error(`Could not update ${path}.`);
     }
     function writeLive(enabled, id) {
-      return putJsonFile(LIVE_PATH, JSON.stringify({ live: enabled, id }, null, 2) + "\n", `LIVE ${enabled ? "ON" : "OFF"}`, null);
+      const body = { live: enabled, id };
+      if (enabled && liveUnlimited) body.unlimited = true;
+      return putJsonFile(LIVE_PATH, JSON.stringify(body, null, 2) + "\n", `LIVE ${enabled ? (liveUnlimited ? "ON (no limit)" : "ON") : "OFF"}`, null);
     }
 
     // ---------- errors ----------
@@ -322,6 +374,7 @@
       stopRecordingLocal();          // unsaved points stay in memory and are saved after you unlock again
       button.disabled = true;
       trackButton.disabled = true;
+      layersButton.disabled = streetButton.disabled = measureButton.disabled = true;
       lockError.textContent = message;
       lockEl.hidden = false;
       tokenInput.focus();
@@ -337,6 +390,7 @@
     // ---------- map ----------
     function setButtonState(on) {
       button.classList.toggle("live", on);
+      button.textContent = on && liveUnlimited ? "LIVE \u221e" : "LIVE";
       button.setAttribute("aria-pressed", String(on));
     }
     // Keep the map exactly as tall as the real screen (covers status bar and home indicator areas).
@@ -353,40 +407,92 @@
     window.addEventListener("orientationchange", () => setTimeout(fitMap, 300));
     fitMap();
 
-    // Upper-left tool stack. The first (empty) item is as tall as the status bar / Dynamic Island so the
-    // Google controls start below it while the map itself still draws underneath.
-    function addTopLeftTools() {
-      const pos = google.maps.ControlPosition.TOP_LEFT;
-      const spacer = document.createElement("div");
-      spacer.style.height = "env(safe-area-inset-top, 0px)";
-      spacer.style.width = "1px";
-      spacer.index = -1000;
-      map.controls[pos].push(spacer);
-      // Measure distance (Google's own app has it; the web API does not, so this is a small clone).
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = "Measure";
-      btn.className = "toolBtn";
-      btn.index = 1000;
-      map.controls[pos].push(btn);
-      let on = false, pts = [], line = null, dots = [];
-      const fmt = m => (m >= 1000 ? (m / 1000).toFixed(2) + " km" : Math.round(m) + " m");
-      const total = () => { let t = 0; for (let i = 1; i < pts.length; i++) t += distanceM(pts[i - 1].lat, pts[i - 1].lng, pts[i].lat, pts[i].lng); return t; };
-      const clear = () => { pts = []; if (line) line.setMap(null); line = null; dots.forEach(d => d.setMap(null)); dots = []; };
-      btn.addEventListener("click", () => {
-        on = !on;
-        btn.classList.toggle("on", on);
-        map.setOptions({ clickableIcons: !on, draggableCursor: on ? "crosshair" : null });
-        if (!on) clear();
-        btn.textContent = on ? "Measure: tap map" : "Measure";
+    // ---------- map tools in the bottom row: Layers, Street View, Measure ----------
+    const layersButton = $("layersButton");
+    const streetButton = $("streetButton");
+    const measureButton = $("measureButton");
+    const layersPanel = $("layersPanel");
+    let toolMode = "none";            // "none" | "street" | "measure"
+    let measurePts = [], measureLine = null, measureDots = [];
+    function fmtDistance(m) { return m >= 1000 ? (m / 1000).toFixed(2) + " km" : Math.round(m) + " m"; }
+    function clearMeasure() {
+      measurePts = [];
+      if (measureLine) measureLine.setMap(null);
+      measureLine = null;
+      measureDots.forEach(d => d.setMap(null));
+      measureDots = [];
+    }
+    function setToolMode(mode) {
+      toolMode = mode;
+      streetButton.classList.toggle("on", mode === "street");
+      measureButton.classList.toggle("on", mode === "measure");
+      streetButton.textContent = mode === "street" ? "Tap the map" : "Street View";
+      measureButton.textContent = "Measure";
+      if (mode !== "measure") clearMeasure();
+      if (map) map.setOptions({ clickableIcons: mode === "none", draggableCursor: mode === "none" ? null : "crosshair" });
+    }
+    function setupMapTools() {
+      const gmaps = google.maps;
+      const layers = { traffic: null, transit: null, bike: null };
+      const layerClass = { traffic: "TrafficLayer", transit: "TransitLayer", bike: "BicyclingLayer" };
+      const typeButtons = { roadmap: $("layerRoad"), hybrid: $("layerSat"), terrain: $("layerTerrain") };
+      for (const [type, btn] of Object.entries(typeButtons)) {
+        btn.addEventListener("click", () => {
+          map.setMapTypeId(type);
+          for (const [t, b] of Object.entries(typeButtons)) b.classList.toggle("on", t === type);
+        });
+      }
+      for (const [name, id] of [["traffic", "layerTraffic"], ["transit", "layerTransit"], ["bike", "layerBike"]]) {
+        $(id).addEventListener("click", () => {
+          if (!layers[name]) layers[name] = new gmaps[layerClass[name]]();
+          const on = !$(id).classList.contains("on");
+          layers[name].setMap(on ? map : null);
+          $(id).classList.toggle("on", on);
+        });
+      }
+      layersButton.addEventListener("click", () => {
+        const open = layersPanel.hidden;
+        layersPanel.hidden = !open;
+        layersButton.classList.toggle("on", open);
+        layersButton.setAttribute("aria-expanded", String(open));
       });
+      const closeLayers = () => { layersPanel.hidden = true; layersButton.classList.remove("on"); layersButton.setAttribute("aria-expanded", "false"); };
+
+      const streetView = map.getStreetView();
+      streetView.setOptions({ enableCloseButton: true, addressControl: false });
+      const svService = new gmaps.StreetViewService();
+      let svTimer = null;
+      streetButton.addEventListener("click", () => setToolMode(toolMode === "street" ? "none" : "street"));
+      measureButton.addEventListener("click", () => setToolMode(toolMode === "measure" ? "none" : "measure"));
+
       map.addListener("click", event => {
-        if (!on || !event || !event.latLng) return;
-        pts.push({ lat: event.latLng.lat(), lng: event.latLng.lng() });
-        if (!line) line = new google.maps.Polyline({ map, strokeColor: "#1a73e8", strokeWeight: 3, clickable: false });
-        line.setPath(pts);
-        dots.push(new google.maps.Marker({ map, position: pts[pts.length - 1], clickable: false, icon: { path: google.maps.SymbolPath.CIRCLE, scale: 4, fillColor: "#fff", fillOpacity: 1, strokeColor: "#1a73e8", strokeWeight: 2 } }));
-        btn.textContent = "Measure: " + fmt(total()) + " (tap here to end)";
+        closeLayers();
+        if (toolMode === "none" || !event || !event.latLng) return;
+        if (event.stop) event.stop();                 // no place popup while a tool is active
+        const lat = event.latLng.lat(), lng = event.latLng.lng();
+        if (toolMode === "street") {
+          svService.getPanorama({ location: { lat, lng }, radius: 75 }, (data, status) => {
+            if (status === "OK" && data && data.location) {
+              streetView.setPosition(data.location.latLng);
+              streetView.setPov({ heading: 0, pitch: 0 });
+              streetView.setVisible(true);
+              setToolMode("none");
+            } else {
+              streetButton.textContent = "No Street View here";
+              clearTimeout(svTimer);
+              svTimer = setTimeout(() => { if (toolMode === "street") streetButton.textContent = "Tap the map"; }, 2500);
+            }
+          });
+          return;
+        }
+        measurePts.push({ lat, lng });
+        if (!measureLine) measureLine = new gmaps.Polyline({ map, strokeColor: "#1a73e8", strokeWeight: 3, clickable: false });
+        measureLine.setPath(measurePts);
+        measureDots.push(new gmaps.Marker({ map, position: measurePts[measurePts.length - 1], clickable: false,
+          icon: { path: gmaps.SymbolPath.CIRCLE, scale: 4, fillColor: "#fff", fillOpacity: 1, strokeColor: "#1a73e8", strokeWeight: 2 } }));
+        let total = 0;
+        for (let i = 1; i < measurePts.length; i++) total += distanceM(measurePts[i - 1].lat, measurePts[i - 1].lng, measurePts[i].lat, measurePts[i].lng);
+        measureButton.textContent = fmtDistance(total);
       });
     }
 
@@ -420,12 +526,9 @@
               cameraControl: false,
               rotateControl: false,
               fullscreenControl: false,
-              // Real Google controls, upper left: Map / Satellite (layers) and the Street View pegman.
-              mapTypeControl: true,
-              mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_LEFT },
-              streetViewControl: true,
-              streetViewControlOptions: { position: google.maps.ControlPosition.TOP_LEFT },
-              scaleControl: true,
+              mapTypeControl: false,
+              streetViewControl: false,
+              scaleControl: false,
               // Place names and icons are clickable and open Google's own info popup.
               clickableIcons: true,
               gestureHandling: "greedy",
@@ -435,7 +538,7 @@
             // While you are looking at a place the map must not jump back to the tracker.
             map.addListener("click", event => { followPaused = Boolean(event && event.placeId); });
             map.addListener("dragstart", () => { followPaused = true; });
-            addTopLeftTools();
+            setupMapTools();
             let idled = false;
             map.addListener("idle", () => { idled = true; hideMapProblem(); });
             const box = $("map").getBoundingClientRect();
@@ -678,6 +781,7 @@
       clearTimeout(stopTimer);
       pollTimer = null;
       stopTimer = null;
+      liveUnlimited = false;
       setButtonState(false);
     }
     async function stopLive(message, level = "notice") {
@@ -705,7 +809,7 @@
       fetchCount = 0;
       setButtonState(true);
       showStatus("Waiting for the tracker (it checks in every ~10 s)…");
-      stopTimer = setTimeout(() => { stopLive("60-second LIVE limit reached.").catch(handleError); }, MAX_LIVE_MS);
+      if (!liveUnlimited) stopTimer = setTimeout(() => { stopLive("60-second LIVE limit reached.").catch(handleError); }, MAX_LIVE_MS);
       pollLatest();
     }
     function applyData(data, id) {
@@ -728,14 +832,14 @@
       recordPoint(data, lat, lng);
       clearStatus();
       const left = Math.max(0, Math.ceil((MAX_LIVE_MS - (Date.now() - startedAt)) / 1000));
-      showStatus(`GPS ${lat.toFixed(6)}, ${lng.toFixed(6)} · fetches ${fetchCount} · ${left}s left`, "debug");
+      showStatus(`GPS ${lat.toFixed(6)}, ${lng.toFixed(6)} · fetches ${fetchCount} · ${liveUnlimited ? "no time limit" : left + "s left"}`, "debug");
     }
     async function pollLatest() {
       if (!liveOn || polling) return;
       polling = true;
       const id = sessionId;
       try {
-        if (Date.now() - startedAt >= MAX_LIVE_MS) {
+        if (!liveUnlimited && Date.now() - startedAt >= MAX_LIVE_MS) {
           await stopLive("60-second LIVE limit reached.");
           return;
         }
@@ -779,6 +883,7 @@
         lockEl.hidden = true;
         button.disabled = false;
         trackButton.disabled = false;
+        layersButton.disabled = streetButton.disabled = measureButton.disabled = false;
         flushPendingTracks();                        // save anything that could not be saved while locked
       } catch (error) {
         token = "";
@@ -788,7 +893,51 @@
       }
     });
 
+    // Hold LIVE for 5 s: switch the 60 s limit off. It then stays live until LIVE is tapped again.
+    let liveHoldTimer = null;
+    let liveSwallowClick = false;
+    button.style.setProperty("--hold", `${LIVE_HOLD_MS}ms`);
+    function endLiveHold() {
+      clearTimeout(liveHoldTimer);
+      liveHoldTimer = null;
+      button.classList.remove("holding");
+    }
+    async function goUnlimited() {
+      if (busy || liveUnlimited) return;
+      busy = true;
+      try {
+        liveUnlimited = true;
+        if (!liveOn) {
+          await startLive();
+        } else {
+          clearTimeout(stopTimer);
+          stopTimer = null;
+          setButtonState(true);
+          await writeLive(true, sessionId);          // tells the tracker there is no limit (same session)
+        }
+      } catch (error) {
+        if (!liveOn) liveUnlimited = false;
+        handleError(error);
+      } finally {
+        busy = false;
+      }
+    }
+    button.addEventListener("pointerdown", event => {
+      if (button.disabled || (event.pointerType === "mouse" && event.button !== 0)) return;
+      clearTimeout(liveHoldTimer);
+      liveSwallowClick = false;
+      button.classList.add("holding");
+      liveHoldTimer = setTimeout(() => {
+        liveHoldTimer = null;
+        button.classList.remove("holding");
+        liveSwallowClick = true;                      // the click that follows the release must not stop LIVE
+        goUnlimited();
+      }, LIVE_HOLD_MS);
+    });
+    for (const type of ["pointerup", "pointercancel", "pointerleave"]) button.addEventListener(type, endLiveHold);
+    button.addEventListener("contextmenu", event => event.preventDefault());
     button.addEventListener("click", async () => {
+      if (liveSwallowClick) { liveSwallowClick = false; return; }
       if (busy) return;
       busy = true;
       button.disabled = true;
