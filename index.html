@@ -149,7 +149,7 @@
     const LATEST_PATH = "gps/latest.json";
     const MAPS_CONFIG_PATH = "config/maps.json";   // {"key": "<Google Maps API key>"} in the private repo
     const POLL_MS = 2000;
-    const MAX_LIVE_MS = 6000000;
+    const MAX_LIVE_MS = 60000;
     const FETCH_TIMEOUT_MS = 8000;
 
     // TRACK (footsteps + datalog)
@@ -614,7 +614,7 @@
         t.retries++;
         handleError(error);                          // a rejected token locks the page; other errors go to the console
         if (!(error && error.status === 401)) {
-          scheduleTrackSave(t, Math.min(6000000, TRACK_RETRY_MS * 2 ** Math.min(t.retries - 1, 4)));
+          scheduleTrackSave(t, Math.min(60000, TRACK_RETRY_MS * 2 ** Math.min(t.retries - 1, 4)));
         }
         return false;
       }
