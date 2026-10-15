@@ -516,7 +516,9 @@
           try {
             map = new google.maps.Map($("map"), {
               center: { lat: 3.1390, lng: 101.6869 },
-              zoom: 52,
+              zoom: 12,
+              maxZoom: 22,              // <-- Google allows up to 22 for satellite, 21 for roadmap
+              minZoom: 1,
               // No zoom +/-, map type, fullscreen or rotate buttons; only Google's Street View person (right side).
               // Pinch / scroll / double-tap still zoom.
               disableDefaultUI: true,
