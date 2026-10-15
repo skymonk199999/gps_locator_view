@@ -852,8 +852,8 @@
     // tracker really starts (it needs up to 10 s to notice the command) and a reloaded page shows the right time.
     function secsLeft(at) { return Math.max(0, Math.ceil((at - Date.now()) / 1000)); }
     function updateLabels() {
-        const liveText = !liveOn ? "LIVE" : liveUnlimited ? "∞" : liveSynced ? `${secsLeft(liveEndsAt)}s` : "…";
-        const trackText = !recording ? "TRACK" : trackUnl ? "∞" : trackSynced ? `${secsLeft(trackEndsAt)}s` : "…";
+        const liveText = !liveOn ? "LIVE" : liveUnlimited ? "∞" : liveSynced ? `${secsLeft(liveEndsAt)}s`;
+        const trackText = !recording ? "TRACK" : trackUnl ? "∞" : trackSynced ? `${secsLeft(trackEndsAt)}s`;
       if (button.textContent !== liveText) button.textContent = liveText;
       if (trackButton.textContent !== trackText) trackButton.textContent = trackText;
     }
