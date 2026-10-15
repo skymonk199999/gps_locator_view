@@ -172,7 +172,7 @@
     <button id="layersButton" class="fab mid" type="button" disabled aria-expanded="false">Layers</button>
     <button id="streetButton" class="fab mid" type="button" hidden>Exit Street View</button>
     <button id="measureButton" class="fab mid" type="button" disabled>Measure</button>
-    <button id="trackButton" class="fab" type="button" disabled aria-pressed="false" aria-label="Track: tap to record footsteps, hold 3 seconds to clear them">TRACK</button>
+    <button id="trackButton" class="fab" type="button" disabled aria-pressed="false" title="Tap: 60 s footsteps. Hold 5 s: unlimited. Double tap: clear footsteps" aria-label="Track: tap for 60 seconds of footsteps, hold 5 seconds for unlimited recording, double tap to clear the footsteps">TRACK</button>
   </div>
 
   <div id="lock" role="dialog" aria-modal="true" aria-labelledby="lockTitle">
@@ -198,8 +198,7 @@
     const LATEST_PATH = "gps/latest.json";
     const MAPS_CONFIG_PATH = "config/maps.json";   // {"key": "<Google Maps API key>"} in the private repo
     const POLL_MS = 2000;
-    const MAX_LIVE_MS = 60000;
-    const LIVE_HOLD_MS = 5000;     // hold LIVE this long: no 60 s limit until you tap LIVE again
+    const LIVE_HOLD_MS = 5000;     // hold LIVE this long: no time limit until you tap LIVE again
     const FETCH_TIMEOUT_MS = 8000;
 
     // TRACK: the tracker (ESP32) records the track itself and uploads it in small part files
@@ -208,7 +207,10 @@
     const TRACK_SYNC_MS = 20000;             // while recording, look for new points this often
     const FINAL_SYNC_MS = [8000, 25000];     // after a recording ends: look for the tracker's last points twice
     const ADOPT_MAX_AGE_MS = 120000;         // on load, a running LIVE/TRACK is taken over only if the tracker was seen this recently
-    const CLEAR_HOLD_MS = 3000;              // hold TRACK this long to clear the footsteps
+    const TRACK_HOLD_MS = 5000;              // hold TRACK this long: recording without a time limit
+    const DOUBLE_TAP_MS = 300;               // two taps on TRACK within this time clear the footsteps
+    const END_GRACE_MS = 3000;               // after the tracker's own 60 s are up, the page waits this long before it ends the session
+    const NO_ANSWER_MS = 90000;              // the tracker never answered: give up
     const STEP_SCALE = 1.0;                  // footstep icon size (about 20 px long)
     const STEP_TURN_MIN_M = 2;               // below this distance the walking direction is not trusted
     const POINT_FIELDS = ["gps_date", "gps_utc", "latitude", "longitude", "altitude_m",
@@ -233,7 +235,6 @@
     let sessionId = "";
     let startedAt = 0;
     let pollTimer = null;
-    let stopTimer = null;
     let liveUnlimited = false;
     let polling = false;
     let stopping = false;
@@ -243,6 +244,9 @@
     let recording = false;          // TRACK is on (recorded by the tracker)
     let trackName = "";             // e.g. "track3"
     let trackId = "";
+    let trackUnl = false;           // the recording has no time limit (hold 5 s)
+    let trackSynced = false, trackEndsAt = 0, trackStartedAt = 0, finishing = false;
+    let liveSynced = false, liveEndsAt = 0;   // countdown anchored to what the tracker reports
     let recSeen = false;            // the tracker has confirmed the recording in latest.json
     let footsteps = [];             // [{ marker, left, aimed }]
     let lastStep = null;
@@ -356,12 +360,14 @@
       }
       throw new Error(`Could not update ${path}.`);
     }
-    const noLimit = () => liveUnlimited || recording;      // a recording never has the 60 s limit
     function writeLive(enabled, id) {
       const body = { live: enabled, id };
-      if (enabled && noLimit()) body.unlimited = true;
-      if (enabled && recording) { body.track = true; body.tid = trackId; body.tname = trackName; }
-      const what = !enabled ? "OFF" : recording ? `ON, recording ${trackName}` : noLimit() ? "ON (no limit)" : "ON";
+      if (enabled && liveUnlimited) body.unlimited = true;
+      if (enabled && recording) {
+        body.track = true; body.tid = trackId; body.tname = trackName;
+        if (trackUnl) body.tunl = true;
+      }
+      const what = !enabled ? "OFF" : (liveUnlimited ? "ON (no limit)" : "ON") + (recording ? `, recording ${trackName}${trackUnl ? " (no limit)" : ""}` : "");
       return putJsonFile(LIVE_PATH, JSON.stringify(body, null, 2) + "\n", `LIVE ${what}`, null);
     }
 
@@ -394,7 +400,7 @@
     // ---------- map ----------
     function setButtonState(on) {
       button.classList.toggle("live", on);
-      button.textContent = on && noLimit() ? "LIVE \u221e" : "LIVE";
+      updateLabels();
       button.setAttribute("aria-pressed", String(on));
     }
     // Keep the map exactly as tall as the real screen (covers status bar and home indicator areas).
@@ -664,15 +670,27 @@
       }
       return `track${highest + 1}`;
     }
-    function drawRow(row) {
-      // [date, secs, lat_e6, lon_e6, alt_dm, spd_dkmh, crs_d, sats, hdop_d]
-      if (!Array.isArray(row) || row.length < 7) return;
+    // A saved point is [date, secs, lat_e6, lon_e6, alt_dm, spd_dkmh, crs_d, sats, hdop_d]
+    function rowPosition(row) {
+      if (!Array.isArray(row) || row.length < 7) return null;
       const lat = row[2] / 1e6, lng = row[3] / 1e6;
-      if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
-      const course = typeof row[6] === "number" ? row[6] / 10 : NaN;
-      addFootstep(lat, lng, course);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+      return { lat, lng, course: typeof row[6] === "number" ? row[6] / 10 : NaN };
     }
-    // Reads the part files of the current track and draws only the points not drawn yet.
+    // Draws the points of one part file that are not drawn yet. Returns the position of the newest one.
+    function drawNewRows(num, rows, sha) {
+      const known = partState.get(num) || { sha: null, drawn: 0 };
+      let newest = null;
+      for (let i = known.drawn; i < rows.length; i++) {
+        const p = rowPosition(rows[i]);
+        if (!p) continue;
+        addFootstep(p.lat, p.lng, p.course);
+        newest = p;
+      }
+      partState.set(num, { sha: sha === undefined ? known.sha : sha, drawn: Math.max(known.drawn, rows.length) });
+      return newest;
+    }
+    // No-limit recording: the tracker uploads in batches (part files). Read what is new.
     async function syncTrack() {
       if (!trackName || syncing || !token || !map) return;
       syncing = true;
@@ -686,13 +704,11 @@
         }
         items.sort((a, b) => a.num - b.num);
         for (const item of items) {
-          const known = partState.get(item.num) || { sha: null, drawn: 0 };
-          if (known.sha === item.sha) continue;
+          const known = partState.get(item.num);
+          if (known && known.sha === item.sha) continue;
           const data = await readJson(item.path);
           if (name !== trackName) return;               // another track was started meanwhile
-          const rows = data && data.track === name && Array.isArray(data.pts) ? data.pts : [];
-          for (let i = known.drawn; i < rows.length; i++) drawRow(rows[i]);
-          partState.set(item.num, { sha: item.sha, drawn: Math.max(known.drawn, rows.length) });
+          drawNewRows(item.num, data && data.track === name && data.tid === trackId && Array.isArray(data.pts) ? data.pts : [], item.sha);
         }
       } catch (error) {
         handleError(error);
@@ -705,57 +721,81 @@
       syncTimer = setTimeout(async () => {
         syncTimer = null;
         if (document.visibilityState !== "hidden") await syncTrack();
-        if (recording) scheduleSync(TRACK_SYNC_MS);
+        if (recording && trackUnl) scheduleSync(TRACK_SYNC_MS);
       }, delay);
-    }
-    function beginTrack(name, id) {
-      trackName = name;
-      trackId = id;
-      recSeen = false;
-      partState = new Map();
-      recording = true;
-      setTrackState(true);
-      if (liveOn) setButtonState(true);              // shows the no-limit mark
-    }
-    function endTrackLocal() {
-      recording = false;
-      setTrackState(false);
-      clearTimeout(syncTimer);
-      syncTimer = null;
-      if (liveOn) setButtonState(true);
     }
     // After a recording ends the tracker uploads its last points within a few seconds: look twice.
     function finalSync() {
-      scheduleSync(FINAL_SYNC_MS[0]);
+      clearTimeout(syncTimer);
+      syncTimer = setTimeout(() => { syncTimer = null; syncTrack(); }, FINAL_SYNC_MS[0]);
       setTimeout(() => { if (!recording) syncTrack(); }, FINAL_SYNC_MS[1]);
+    }
+    function beginTrack(name, id, unl) {
+      trackName = name;
+      trackId = id;
+      trackUnl = unl;
+      recSeen = false;
+      trackSynced = false;
+      trackEndsAt = 0;
+      trackStartedAt = Date.now();
+      partState = new Map();
+      recording = true;
+      setTrackState(true);
+      updateLabels();
+    }
+    function endTrackLocal() {
+      recording = false;
+      trackUnl = false;
+      trackSynced = false;
+      setTrackState(false);
+      clearTimeout(syncTimer);
+      syncTimer = null;
+      updateLabels();
+    }
+    // The tracker ends a 60 s recording by itself. The page learns about it from the countdown, saves nothing,
+    // and only tells the tracker that the recording is over (live.json without the track).
+    async function finishTrack60() {
+      if (!recording) return;
+      endTrackLocal();
+      finalSync();
+      if (liveOn) await writeLive(true, sessionId);
     }
     async function stopTracking() {
       if (!recording) return;
       endTrackLocal();
       finalSync();
-      if (liveOn) {
-        if (!noLimit()) {                            // back to a normal LIVE: its 60 s window starts now
-          startedAt = Date.now();
-          clearTimeout(stopTimer);
-          stopTimer = setTimeout(() => { stopLive("60-second LIVE limit reached.").catch(handleError); }, MAX_LIVE_MS);
-        }
-        await writeLive(true, sessionId);
-      }
+      if (liveOn) await writeLive(true, sessionId);      // LIVE carries on in its own mode
     }
-    async function startTracking() {
+    // unl = false: tap, 60 s, every point at once.   unl = true: hold 5 s, no limit, batches, page may be closed.
+    async function startTracking(unl) {
       const name = await nextTrackName();            // before anything changes: track1, track2, ... never overwritten
       clearFootsteps();                              // the previous footsteps stay until this click
-      beginTrack(name, newSessionId());
+      const liveWas = liveUnlimited;
+      if (unl) liveUnlimited = true;                 // a no-limit recording needs a no-limit LIVE
+      beginTrack(name, newSessionId(), unl);
       try {
-        if (!liveOn) {
-          await startLive();                         // the first command carries the track too
-        } else {
-          clearTimeout(stopTimer);
-          stopTimer = null;
-          await writeLive(true, sessionId);
-        }
+        if (!liveOn) await startLive();              // the first command carries the track too
+        else await writeLive(true, sessionId);
       } catch (error) {
         endTrackLocal();
+        liveUnlimited = liveOn ? liveWas : false;
+        throw error;
+      }
+      setButtonState(true);
+      if (unl) scheduleSync(TRACK_SYNC_MS);
+    }
+    async function promoteTrack() {                  // hold TRACK while a 60 s recording runs
+      const liveWas = liveUnlimited;
+      trackUnl = true;
+      liveUnlimited = true;
+      trackSynced = false;
+      setButtonState(true);
+      try {
+        await writeLive(true, sessionId);
+      } catch (error) {
+        trackUnl = false;
+        liveUnlimited = liveWas;
+        setButtonState(true);
         throw error;
       }
       scheduleSync(TRACK_SYNC_MS);
@@ -770,10 +810,9 @@
     function stopLocal() {
       liveOn = false;
       clearTimeout(pollTimer);
-      clearTimeout(stopTimer);
       pollTimer = null;
-      stopTimer = null;
       liveUnlimited = false;
+      liveSynced = false;
       if (recording) { endTrackLocal(); finalSync(); }   // the tracker ends the recording when LIVE ends
       setButtonState(false);
     }
@@ -787,7 +826,7 @@
         await writeLive(false, id);
       } catch (error) {
         if (error && error.status === 401) { relock("Token rejected (wrong or expired). Enter it again."); }
-        else showStatus(`LIVE stopped here, but the tracker may keep running until its own 60 s limit. (${describe(error)})`, "error");
+        else showStatus(`LIVE stopped here, but the tracker may keep running until its own limit. (${describe(error)})`, "error");
       } finally {
         stopping = false;
       }
@@ -799,20 +838,73 @@
       liveOn = true;
       followPaused = false;
       startedAt = Date.now();
+      liveSynced = false;
+      liveEndsAt = 0;
       fetchCount = 0;
       setButtonState(true);
       showStatus("Waiting for the tracker (it checks in every ~10 s)…");
-      if (!noLimit()) stopTimer = setTimeout(() => { stopLive("60-second LIVE limit reached.").catch(handleError); }, MAX_LIVE_MS);
       pollLatest();
+    }
+
+    // ---------- countdown ----------
+    // The tracker enforces both 60 s limits itself and reports the seconds left ("ll" for LIVE, "tl" for TRACK) in
+    // latest.json and in the track file. The page counts down from those numbers, so the countdown starts when the
+    // tracker really starts (it needs up to 10 s to notice the command) and a reloaded page shows the right time.
+    function secsLeft(at) { return Math.max(0, Math.ceil((at - Date.now()) / 1000)); }
+    function updateLabels() {
+      const liveText = !liveOn ? "LIVE" : liveUnlimited ? "LIVE ∞" : liveSynced ? `LIVE ${secsLeft(liveEndsAt)}s` : "LIVE …";
+      const trackText = !recording ? "TRACK" : trackUnl ? "TRACK ∞" : trackSynced ? `TRACK ${secsLeft(trackEndsAt)}s` : "TRACK …";
+      if (button.textContent !== liveText) button.textContent = liveText;
+      if (trackButton.textContent !== trackText) trackButton.textContent = trackText;
+    }
+    // Reports can be a few seconds old: only ever move the end earlier, never later.
+    function syncTimes(data) {
+      if (!data) return;
+      const now = Date.now();
+      if (!liveUnlimited && typeof data.ll === "number" && data.ll >= 0) {
+        const at = now + data.ll * 1000;
+        liveEndsAt = liveSynced ? Math.min(liveEndsAt, at) : at;
+        liveSynced = true;
+      }
+      if (recording && !trackUnl && typeof data.tl === "number" && data.tl >= 0) {
+        const at = now + data.tl * 1000;
+        trackEndsAt = trackSynced ? Math.min(trackEndsAt, at) : at;
+        trackSynced = true;
+      }
+    }
+    function tick() {
+      updateLabels();
+      const now = Date.now();
+      if (liveOn && !liveUnlimited && !stopping) {
+        if (liveSynced && now >= liveEndsAt + END_GRACE_MS) stopLive("60-second LIVE finished.").catch(handleError);
+        else if (!liveSynced && now - startedAt > NO_ANSWER_MS) stopLive("The tracker did not answer.", "error").catch(handleError);
+      }
+      if (recording && !trackUnl && !finishing) {
+        const over = trackSynced ? now >= trackEndsAt + END_GRACE_MS : now - trackStartedAt > NO_ANSWER_MS;
+        if (over) {
+          finishing = true;
+          finishTrack60().catch(handleError).finally(() => { finishing = false; });
+        }
+      }
+    }
+    setInterval(tick, 500);
+
+    function applyPart(part) {
+      syncTimes(part);
+      const rows = Array.isArray(part.pts) ? part.pts : [];
+      const newest = drawNewRows(1, rows);              // a 60 s track is always one part file
+      if (newest) updateMarker(newest.lat, newest.lng);
+      return rows.length > 0;
     }
     function applyData(data, id) {
       if (!data || data.session !== id) {
         showStatus("Waiting for the tracker (it checks in every ~10 s)…");
         return;
       }
-      if (recording) {
+      syncTimes(data);
+      if (recording && trackUnl) {
         if (data.rec === trackName) recSeen = true;
-        else if (recSeen) {                            // the tracker no longer reports this recording (stopped elsewhere)
+        else if (recSeen) {                              // the tracker no longer reports this recording (stopped elsewhere)
           endTrackLocal();
           finalSync();
           showStatus("Recording ended on the tracker.");
@@ -831,27 +923,36 @@
       }
       updateMarker(lat, lng);
       clearStatus();
-      const left = Math.max(0, Math.ceil((MAX_LIVE_MS - (Date.now() - startedAt)) / 1000));
-      showStatus(`GPS ${lat.toFixed(6)}, ${lng.toFixed(6)} · fetches ${fetchCount} · ${noLimit() ? "no time limit" : left + "s left"}`, "debug");
+      showStatus(`GPS ${lat.toFixed(6)}, ${lng.toFixed(6)} · fetches ${fetchCount}`, "debug");
     }
     async function pollLatest() {
       if (!liveOn || polling) return;
       polling = true;
       const id = sessionId;
       try {
-        if (!noLimit() && Date.now() - startedAt >= MAX_LIVE_MS) {
-          await stopLive("60-second LIVE limit reached.");
-          return;
+        let fromPart = false;
+        if (recording && !trackUnl && trackName) {
+          // 60 s recording: the tracker writes every point to the track file (and nothing else), so read that
+          let part = null;
+          try {
+            part = await readJson(`${TRACK_DIR}/${trackName}_001.json`);
+          } catch (error) {
+            if (error.status !== 404) throw error;
+          }
+          if (!liveOn || id !== sessionId) return;
+          if (part && part.tid === trackId) fromPart = applyPart(part);
         }
-        let data = null;
-        try {
-          data = await readJson(LATEST_PATH);
-        } catch (error) {
-          if (error.status !== 404) throw error;   // no file yet: the tracker has not written anything
+        if (!fromPart) {
+          let data = null;
+          try {
+            data = await readJson(LATEST_PATH);
+          } catch (error) {
+            if (error.status !== 404) throw error;   // no file yet: the tracker has not written anything
+          }
+          if (!liveOn || id !== sessionId) return;
+          applyData(data, id);
         }
-        if (!liveOn || id !== sessionId) return;
         fetchCount++;
-        applyData(data, id);
       } catch (error) {
         if (error && (error.status === 403 || error.status === 429)) {
           await stopLive(describe(error), "error");
@@ -865,30 +966,54 @@
     }
 
     // The tracker keeps running when this page is closed or reloaded. After unlocking, take over a session that is
-    // still alive: live.json says LIVE with no time limit (or a recording) AND latest.json shows the tracker answering.
+    // still alive: live.json says LIVE and the tracker answered recently (latest.json or the track file).
+    function gpsTime(date, utc) {
+      return date && utc ? Date.parse(`${date}T${utc}Z`) : NaN;
+    }
+    function rowTime(row) {                          // [yyyymmdd, seconds of the day, ...]
+      if (!Array.isArray(row) || !(row[0] > 19000000) || !(row[1] >= 0)) return NaN;
+      const d = String(row[0]);
+      const s = row[1];
+      const hh = String(Math.floor(s / 3600)).padStart(2, "0"), mm = String(Math.floor(s % 3600 / 60)).padStart(2, "0"), ss = String(s % 60).padStart(2, "0");
+      return Date.parse(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T${hh}:${mm}:${ss}Z`);
+    }
+    async function readOptional(path) {
+      try { return await readJson(path); } catch (error) { if (error.status !== 404) throw error; return null; }
+    }
     async function adoptRunning() {
       try {
-        let live = null, latest = null;
-        try { live = await readJson(LIVE_PATH); } catch (error) { if (error.status !== 404) throw error; }
-        if (!live || live.live !== true || typeof live.id !== "string" || !(live.unlimited === true || live.track === true)) return;
-        try { latest = await readJson(LATEST_PATH); } catch (error) { if (error.status !== 404) throw error; }
-        if (!latest || latest.session !== live.id) return;
-        const when = latest.gps_date && latest.gps_utc ? Date.parse(`${latest.gps_date}T${latest.gps_utc}Z`) : NaN;
-        if (Number.isFinite(when) && Math.abs(Date.now() - when) > ADOPT_MAX_AGE_MS) return;   // stale: the tracker is not running it any more
+        const live = await readOptional(LIVE_PATH);
+        if (!live || live.live !== true || typeof live.id !== "string") return;
+        const tracking = live.track === true && /^track\d{1,6}$/.test(live.tname || "") && typeof live.tid === "string";
+        const trackNoLimit = tracking && live.tunl === true;
+        const latest = await readOptional(LATEST_PATH);
+        const part = tracking && !trackNoLimit ? await readOptional(`${TRACK_DIR}/${live.tname}_001.json`) : null;
+        const latestOk = Boolean(latest && latest.session === live.id);
+        const partOk = Boolean(part && part.tid === live.tid);
+        if (!latestOk && !partOk) return;
+        let when = NaN;
+        if (latestOk) when = gpsTime(latest.gps_date, latest.gps_utc);
+        if (partOk && Array.isArray(part.pts) && part.pts.length) {
+          const t = rowTime(part.pts[part.pts.length - 1]);
+          if (Number.isFinite(t) && !(t < when)) when = t;
+        }
+        if (Number.isFinite(when) && Math.abs(Date.now() - when) > ADOPT_MAX_AGE_MS) return;   // stale: not running any more
         sessionId = live.id;
         liveOn = true;
-        liveUnlimited = live.unlimited === true && live.track !== true;
+        liveUnlimited = live.unlimited === true || trackNoLimit;
+        liveSynced = false;
         followPaused = false;
         startedAt = Date.now();
         fetchCount = 0;
-        setButtonState(true);
-        if (live.track === true && /^track\d{1,6}$/.test(live.tname || "") && typeof live.tid === "string") {
+        if (tracking) {
           clearFootsteps();
-          beginTrack(live.tname, live.tid);
-          recSeen = latest.rec === live.tname;
-          await syncTrack();                           // footsteps recorded so far
-          scheduleSync(TRACK_SYNC_MS);
+          beginTrack(live.tname, live.tid, trackNoLimit);
+          recSeen = Boolean(latestOk && latest.rec === live.tname);
         }
+        if (latestOk) syncTimes(latest);
+        if (partOk) { applyPart(part); }
+        setButtonState(true);
+        if (trackNoLimit) { await syncTrack(); scheduleSync(TRACK_SYNC_MS); }   // footsteps recorded so far
         pollLatest();
       } catch (error) {
         handleError(error);
@@ -924,7 +1049,7 @@
       }
     });
 
-    // Hold LIVE for 5 s: switch the 60 s limit off. It then stays live until LIVE is tapped again.
+    // ---------- LIVE button: tap = 60 s (countdown) / stop, hold 5 s = no time limit ----------
     let liveHoldTimer = null;
     let liveSwallowClick = false;
     button.style.setProperty("--hold", `${LIVE_HOLD_MS}ms`);
@@ -941,13 +1066,12 @@
         if (!liveOn) {
           await startLive();
         } else {
-          clearTimeout(stopTimer);
-          stopTimer = null;
+          liveSynced = false;
           setButtonState(true);
           await writeLive(true, sessionId);          // tells the tracker there is no limit (same session)
         }
       } catch (error) {
-        if (!liveOn) liveUnlimited = false;
+        if (!liveOn) { liveUnlimited = false; setButtonState(false); }
         handleError(error);
       } finally {
         busy = false;
@@ -983,11 +1107,12 @@
       }
     });
 
-    // ---------- TRACK button: tap = start / stop recording, hold 3 s = clear the footsteps ----------
+    // ---------- TRACK button: tap = 60 s recording / stop, hold 5 s = no limit, double-tap = clear the footsteps ----------
     let holdTimer = null;
     let holdFired = false;
     let blockClickUntil = 0;
-    trackButton.style.setProperty("--hold", `${CLEAR_HOLD_MS}ms`);
+    let tapTimer = null;
+    trackButton.style.setProperty("--hold", `${TRACK_HOLD_MS}ms`);
     function endHold() {
       clearTimeout(holdTimer);
       holdTimer = null;
@@ -995,6 +1120,32 @@
       if (holdFired) {
         holdFired = false;
         blockClickUntil = Date.now() + 600;          // the click that follows the release must not toggle recording
+      }
+    }
+    async function trackHold() {
+      if (busy || (recording && trackUnl)) return;
+      busy = true;
+      try {
+        if (recording) await promoteTrack();
+        else await startTracking(true);
+      } catch (error) {
+        handleError(error);
+      } finally {
+        busy = false;
+      }
+    }
+    async function trackTap() {
+      if (recording) { stopTracking().catch(handleError); return; }
+      if (busy) return;
+      busy = true;
+      trackButton.disabled = true;
+      try {
+        await startTracking(false);
+      } catch (error) {
+        handleError(error);
+      } finally {
+        busy = false;
+        if (token) trackButton.disabled = false;
       }
     }
     trackButton.addEventListener("pointerdown", event => {
@@ -1006,25 +1157,22 @@
         holdTimer = null;
         holdFired = true;
         trackButton.classList.remove("holding");
-        clearFootsteps();                            // display only: the track files are not touched (nothing is drawn again)
-      }, CLEAR_HOLD_MS);
+        clearTimeout(tapTimer);
+        tapTimer = null;
+        trackHold();
+      }, TRACK_HOLD_MS);
     });
     for (const type of ["pointerup", "pointercancel", "pointerleave"]) trackButton.addEventListener(type, endHold);
     trackButton.addEventListener("contextmenu", event => event.preventDefault());
-    trackButton.addEventListener("click", async () => {
+    trackButton.addEventListener("click", () => {
       if (Date.now() < blockClickUntil) return;
-      if (recording) { stopTracking().catch(handleError); return; }
-      if (busy) return;
-      busy = true;
-      trackButton.disabled = true;
-      try {
-        await startTracking();
-      } catch (error) {
-        handleError(error);
-      } finally {
-        busy = false;
-        if (token) trackButton.disabled = false;
+      if (tapTimer) {                                // second tap in time: clear the footsteps (display only)
+        clearTimeout(tapTimer);
+        tapTimer = null;
+        clearFootsteps();
+        return;
       }
+      tapTimer = setTimeout(() => { tapTimer = null; trackTap(); }, DOUBLE_TAP_MS);
     });
 
     document.addEventListener("visibilitychange", () => {
@@ -1032,7 +1180,7 @@
         clearTimeout(pollTimer);
         pollLatest();
       }
-      if (document.visibilityState === "visible" && recording) syncTrack();
+      if (document.visibilityState === "visible" && recording && trackUnl) syncTrack();
     });
 
     setButtonState(false);
