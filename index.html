@@ -72,9 +72,11 @@
       gap: 8px;
     }
     .fab.mid { flex: 1 1 0; min-width: 0; padding: 6px 2px; font-size: 11px; font-weight: 700; letter-spacing: 0; line-height: 1.15; overflow-wrap: normal; word-break: normal; overflow: hidden; }
+    .fab.mid .cap { display: block; font-size: 9px; font-weight: 600; opacity: .7; letter-spacing: .02em; }
+    .fab.mid .val { display: block; }
     #streetButton[hidden] { display: none; }
     .fab.mid.on { background: rgba(26, 115, 232, 1); color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.5); }
-    #liveButton, #trackButton { isolation: isolate; overflow: hidden; }
+    #liveButton, #trackButton, #layersButton { isolation: isolate; overflow: hidden; }
     #layersPanel {
       position: fixed;
       z-index: 1100;
@@ -91,27 +93,33 @@
     }
     #layersPanel[hidden] { display: none; }
     #layersPanel h2 { margin: 2px 4px 6px; font-size: 12px; font-weight: 700; color: #666; text-transform: uppercase; letter-spacing: .06em; }
-    #layersPanel .row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-    #layersPanel .row:last-child { margin-bottom: 0; }
+    #layersPanel .row { display: flex; flex-wrap: wrap; gap: 6px; }
     #layersPanel button { flex: 1 1 28%; min-height: 40px; border: 1px solid #ccc; border-radius: 10px; background: #fff; font: inherit; color: inherit; }
     #layersPanel button.on { background: #1a73e8; border-color: #1a73e8; color: #fff; font-weight: 700; }
-    /* LIVE / TRACK switched on: red at 70% transparency (alpha .30). The text shadow keeps the label readable. */
+    /* LIVE / TRACK switched on: red. The text shadow keeps the label readable. */
     #liveButton.live, #trackButton.rec { background: rgba(220, 35, 45, 1); color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.65); }
-    /* Progress fill while TRACK is held down for the 3-second "clear footsteps" press. */
-    #liveButton::before, #trackButton::before {
+    /* Progress fill while LIVE / TRACK / Layers is held down for its 5-second press. */
+    #liveButton::before, #trackButton::before, #layersButton::before {
       content: "";
       position: absolute;
       inset: 0;
       z-index: -1;
-      border-radius: inherit; 
+      border-radius: inherit;
       background: rgba(255, 255, 255, .55);
       transform: scaleX(0);
       transform-origin: left center;
       transition: transform .2s ease-out;
     }
-    #liveButton.holding::before, #trackButton.holding::before { transform: scaleX(1); transition: transform var(--hold, 3000ms) linear; }
-    /* Orange ring: the track file could not be saved yet. It keeps retrying and the ring disappears once saved. */
-    #trackButton.warn { box-shadow: 0 0 0 3px rgba(255, 170, 0, .95), 0 3px 14px rgba(0,0,0,.28); }
+    #liveButton.holding::before, #trackButton.holding::before, #layersButton.holding::before { transform: scaleX(1); transition: transform var(--hold, 5000ms) linear; }
+    /* The GPS marker's info bubble. */
+    .gb { font: 13px/1.35 system-ui, -apple-system, sans-serif; color: #202124; min-width: 200px; }
+    .gb .st { display: flex; align-items: center; gap: 7px; font-weight: 700; margin-bottom: 6px; }
+    .gb .dot { flex: 0 0 auto; width: 11px; height: 11px; border-radius: 50%; background: #80868b; }
+    .gb table { border-collapse: collapse; width: 100%; }
+    .gb td { padding: 1px 0; }
+    .gb td:first-child { color: #5f6368; padding-right: 14px; }
+    .gb td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+    .gb .ago { margin-top: 6px; color: #5f6368; font-size: 12px; }
     #lock {
       position: fixed;
       z-index: 3000;
@@ -155,12 +163,6 @@
   <div id="topScrim" aria-hidden="true"></div>
   <div id="mapProblem" role="alert"><span id="mapProblemText"></span><button id="mapProblemReload" type="button">Reload</button></div>
   <div id="layersPanel" hidden>
-    <h2>Map type</h2>
-    <div class="row">
-      <button id="layerRoad" type="button" class="on">Default</button>
-      <button id="layerSat" type="button">Satellite</button>
-      <button id="layerTerrain" type="button">Terrain</button>
-    </div>
     <h2>Map details</h2>
     <div class="row">
       <button id="layerTraffic" type="button">Traffic</button>
@@ -170,10 +172,10 @@
   </div>
   <div id="bar">
     <button id="liveButton" class="fab" type="button" disabled aria-label="Live: tap to start or stop, hold 5 seconds for no time limit">LIVE</button>
-    <button id="layersButton" class="fab mid" type="button" disabled aria-expanded="false">Layers</button>
+    <button id="layersButton" class="fab mid" type="button" disabled aria-expanded="false" aria-label="Map type: tap to switch between default, satellite and terrain, hold 5 seconds for map details"><span class="cap">Layers</span><span class="val">Default</span></button>
     <button id="streetButton" class="fab mid" type="button" hidden>Exit Street View</button>
     <button id="measureButton" class="fab mid" type="button" disabled>Measure</button>
-    <button id="trackButton" class="fab" type="button" disabled aria-pressed="false" title="Tap: 60 s footsteps. Hold 5 s: unlimited. Double tap: clear footsteps" aria-label="Track: tap for 60 seconds of footsteps, hold 5 seconds for unlimited recording, double tap to clear the footsteps">TRACK</button>
+    <button id="trackButton" class="fab" type="button" disabled aria-pressed="false" title="Tap: 60 s recording. Hold 5 s: unlimited. Double tap: clear the footsteps" aria-label="Track: tap for a 60 second recording, hold 5 seconds for unlimited recording, double tap to clear the footsteps">TRACK</button>
   </div>
 
   <div id="lock" role="dialog" aria-modal="true" aria-labelledby="lockTitle">
@@ -195,66 +197,129 @@
     const DATA_REPO = "gps_locator";
     const BRANCH = "main";
 
-    const LIVE_PATH = "gps/live.json";
-    const LATEST_PATH = "gps/latest.json";
-    const MAPS_CONFIG_PATH = "config/maps.json";   // {"key": "<Google Maps API key>"} in the private repo
-    const POLL_MS = 2000;
-    const LIVE_HOLD_MS = 5000;     // hold LIVE this long: no time limit until you tap LIVE again
-    const FETCH_TIMEOUT_MS = 8000;
+    // ---------------------------------------------------------------------------------------------------------------
+    // Files in the private repo (all read and written through the GitHub Contents API):
+    //   config/gmap.json             {"key": "<Google Maps API key>"}
+    //   config/live_status.json      written by this page (any device): {"live", "id", "unlimited"?, "track"?, "tid"?, "tunl"?}
+    //                                = the shared LIVE / TRACK state. The tracker (ESP32) reads it.
+    //   config/latest_location.json  written by the tracker: position (UTC) + "seq", "ll", "tl", "rec_tid", "rec_dir", "rec_base"
+    //   config/view_state.json       written by this page (any device): the shared map view and the footsteps source
+    //   60s_location/Location_<date>_<time>.csv         TRACK tap (60 s): one file per session
+    //   inf_location/Location_<date>_<time>_001.csv     TRACK hold (no limit): _001, _002 ... of 200 rows each
+    //   CSV header: gps_date,gps_time_myt,latitude,longitude,altitude_m,speed_kmh  (Malaysia time)
+    // Every open page watches live_status.json, so all devices show the same LIVE / TRACK state, the same countdown
+    // and the same footsteps (rebuilt from the CSV files). Unchanged files cost nothing against GitHub's rate limit
+    // because every read is conditional (ETag / If-None-Match).
+    // ---------------------------------------------------------------------------------------------------------------
+    const LIVE_PATH = "config/live_status.json";
+    const LATEST_PATH = "config/latest_location.json";
+    const MAPS_CONFIG_PATH = "config/gmap.json";
+    const VIEW_PATH = "config/view_state.json";
+    const DIR_60 = "60s_location";
+    const DIR_INF = "inf_location";
+    const CHUNK_ROWS = 200;                  // rows per file in inf_location (same value as CHUNK_ROWS in track.py)
 
-    // TRACK: the tracker (ESP32) records the track itself and uploads it in small part files
-    // gps/track3_001.json, track3_002.json, ... so recording goes on when this page is closed or reloaded.
-    const TRACK_DIR = "gps";
-    const TRACK_SYNC_MS = 20000;             // while recording, look for new points this often
-    const FINAL_SYNC_MS = [8000, 25000];     // after a recording ends: look for the tracker's last points twice
-    const ADOPT_MAX_AGE_MS = 120000;         // on load, a running LIVE/TRACK is taken over only if the tracker was seen this recently
+    const FETCH_TIMEOUT_MS = 8000;
+    const LIVE_POLL_MS = 3000;               // live_status.json: every open page watches it
+    const VIEW_POLL_MS = 3000;               // view_state.json
+    const LOC_POLL_60_MS = 2000;             // latest_location.json while LIVE is on (60 s)
+    const LOC_POLL_INF_MS = 4000;            // ... and in a no-limit session (the tracker writes every 8-15 s)
+    const MISSING_POLL_MS = 15000;           // a file that does not exist yet is looked for this often
+    const STEPS_POLL_60_MS = 2000;           // CSV of a 60 s recording
+    const STEPS_POLL_INF_MS = 10000;         // CSV chunks of a no-limit recording (uploaded every ~45 s)
+    const FINAL_SYNC_MS = [8000, 25000];     // after a recording ends: look for the tracker's last rows twice
+    const LIVE_HOLD_MS = 5000;               // hold LIVE this long: no time limit until you tap LIVE again
     const TRACK_HOLD_MS = 5000;              // hold TRACK this long: recording without a time limit
-    const DOUBLE_TAP_MS = 300;               // two taps on TRACK within this time clear the footsteps
-    const END_GRACE_MS = 3000;               // after the tracker's own 60 s are up, the page waits this long before it ends the session
+    const LAYERS_HOLD_MS = 5000;             // hold Layers this long: the map-details panel opens
+    const DOUBLE_TAP_MS = 300;               // two taps on TRACK within this time clear the footsteps (on every device)
+    const END_GRACE_MS = 3000;               // after the tracker's own 60 s are up, a page waits this long before it ends the session
     const NO_ANSWER_MS = 90000;              // the tracker never answered: give up
+    const STALE_MS = 45000;                  // no new data from the tracker for this long: the marker turns red
+    const VIEW_DEBOUNCE_MS = 1500;           // a map change is shared this long after you stop moving
+    const VIEW_MIN_GAP_MS = 10000;           // at most one shared map change per device per this time
+    const VIEW_IDLE_MS = 3000;               // changes from other devices wait until you have been idle this long
+    const VIEW_BACKOFF_MS = 300000;          // GitHub refused a write: no map changes are sent for 5 minutes
+    const USER_ACTIVE_MS = 4000;             // a map change counts as "yours" if you touched something this recently
     const STEP_SCALE = 1.0;                  // footstep icon size (about 20 px long)
-    const STEP_TURN_MIN_M = 2;               // below this distance the walking direction is not trusted
-    const POINT_FIELDS = ["gps_date", "gps_utc", "latitude", "longitude", "altitude_m",
-                          "speed_kmh", "course_deg", "satellites", "hdop", "fix_quality"];
+    const STILL_KMH = 2;                     // below this speed a footprint keeps the previous direction
+    const MIN_CHORD_M = 4;                   // the two neighbouring points must be this far apart to give a direction
+    const SWING_DEG = 60;                    // a single point turning more than this against both neighbours is a GPS error
+    const AGREE_DEG = 45;                    // ... when the neighbours agree with each other within this
+    const MYT_OFFSET_MS = 8 * 3600 * 1000;
+
+    const ID_RE = /^[A-Za-z0-9]{6,40}$/;
+    const BASE_RE = /^Location_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/;
+    const DIR_RE = /^(60s_location|inf_location)$/;
+    const MAP_TYPES = ["roadmap", "hybrid", "terrain"];
+    const MAP_TYPE_NAMES = { roadmap: "Default", hybrid: "Satellite", terrain: "Terrain" };
+    const PIN_COLORS = { green: "#1e9e4a", red: "#d93025", grey: "#80868b" };
 
     const DEBUG = new URLSearchParams(location.search).has("debug");
 
     const $ = id => document.getElementById(id);
     const button = $("liveButton");
     const trackButton = $("trackButton");
+    const layersButton = $("layersButton");
+    const streetButton = $("streetButton");
+    const measureButton = $("measureButton");
+    const layersPanel = $("layersPanel");
     const lockEl = $("lock");
     const lockForm = $("lockForm");
     const tokenInput = $("token");
     const unlockBtn = $("unlock");
     const lockError = $("lockError");
 
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const isNum = v => typeof v === "number" && Number.isFinite(v);
+    const validLatLng = (a, b) => isNum(a) && isNum(b) && Math.abs(a) <= 90 && Math.abs(b) <= 180;
+    const round6 = v => Math.round(v * 1e6) / 1e6;
+    const pad2 = n => (n < 10 ? "0" + n : String(n));
+
     let token = "";                 // kept in memory only; never written to storage
+    const clientId = newId();       // tells this page's own writes from other devices' writes
     let map = null;
     let marker = null;
+    let info = null;                // the marker's info bubble
+    let bubbleOpen = false;
     let followPaused = false;       // true while you look around or inspect a place
-    let liveOn = false;
-    let sessionId = "";
-    let startedAt = 0;
-    let pollTimer = null;
-    let liveUnlimited = false;
-    let polling = false;
-    let stopping = false;
-    let busy = false;
-    let fetchCount = 0;
+    let shownStatus = "";
+    let netFails = 0;               // consecutive failed requests of this device
 
-    let recording = false;          // TRACK is on (recorded by the tracker)
-    let trackName = "";             // e.g. "track3"
-    let trackId = "";
-    let trackUnl = false;           // the recording has no time limit (hold 5 s)
-    let trackSynced = false, trackEndsAt = 0, trackStartedAt = 0, finishing = false;
-    let liveSynced = false, liveEndsAt = 0;   // countdown anchored to what the tracker reports
-    let recSeen = false;            // the tracker has confirmed the recording in latest.json
-    let footsteps = [];             // [{ marker, left, aimed }]
-    let lastStep = null;
-    let lastHeading = 0;
-    let partState = new Map();      // part number -> { sha, drawn }
-    let syncing = false;
-    let syncTimer = null;
+    // ---------- the shared LIVE / TRACK state (from live_status.json) ----------
+    let LS = blankLS();
+    let LL = null;                  // latest_location.json of the running LIVE session
+    let sessionSeenAt = 0;          // when this page first saw the running LIVE session
+    let trackSeenAt = 0;
+    let dataAt = 0;                 // when the tracker's data last changed (for the marker colour)
+    let firstReport = true;
+    let lsFreshAt = 0;              // when live_status.json was last read successfully
+    let liveSynced = false, liveEndsAt = 0;     // countdowns anchored to what the tracker reports
+    let trackSynced = false, trackEndsAt = 0;
+    let fixInfo = null;             // newest position {ts, lat, lng, alt, spd, sats, hdop, crs}
+    let busy = false;
+    const autoBusy = { live: 0, track: 0 };
+
+    function blankLS() {
+      return { live: false, id: null, unlimited: false, track: false, tid: null, tunl: false };
+    }
+    function normLS(d) {
+      const ok = d && typeof d === "object";
+      const live = ok && d.live === true && typeof d.id === "string" && ID_RE.test(d.id);
+      const trk = live && d.track === true && typeof d.tid === "string" && ID_RE.test(d.tid);
+      return {
+        live,
+        id: live ? d.id : null,
+        unlimited: live && (d.unlimited === true || (trk && d.tunl === true)),
+        track: trk,
+        tid: trk ? d.tid : null,
+        tunl: trk && d.tunl === true
+      };
+    }
+    function newId() {
+      const bytes = new Uint8Array(9);
+      crypto.getRandomValues(bytes);
+      return Date.now().toString(36) + Array.from(bytes, b => (b % 36).toString(36)).join("");
+    }
 
     // ---------- status messages ----------
     // There is no on-screen status box. Messages go to the browser console
@@ -263,9 +328,6 @@
       if (level === "error") console.warn("[GPS]", message);
       else if (DEBUG) console.log("[GPS]", message);
       if (level !== "debug") button.title = message;
-    }
-    function clearStatus() {
-      button.removeAttribute("title");
     }
 
     // ---------- GitHub helpers ----------
@@ -311,78 +373,94 @@
       error.status = response.status;
       return error;
     }
-    async function readJson(path) {
-      const response = await ghFetch(readUrl(path), { headers: headers(true) });
-      if (!response.ok) throw await httpError(response, path);
-      return JSON.parse(await response.text());
-    }
     function base64Utf8(text) {
       const bytes = new TextEncoder().encode(text);
       let binary = "";
       for (const byte of bytes) binary += String.fromCharCode(byte);
       return btoa(binary);
     }
-    // Create or update one file. shaBox (optional) remembers the file's SHA between saves so a repeated save
-    // needs one request instead of two; it is dropped whenever GitHub says it is stale.
-    async function putJsonFile(path, text, message, shaBox, timeoutMs = FETCH_TIMEOUT_MS) {
-      const content = base64Utf8(text);
+    function utf8FromBase64(b64) {
+      const bin = atob(String(b64).replace(/\s/g, ""));
+      return new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0)));
+    }
+    // Plain read (used once, for the Maps key).
+    async function readJson(path) {
+      const response = await ghFetch(readUrl(path), { headers: headers(true) });
+      if (!response.ok) throw await httpError(response, path);
+      return JSON.parse(await response.text());
+    }
+    // Conditional read: st = {etag, last}. -> {same} | {missing} | {text}. A file that did not change answers 304,
+    // which GitHub does not count against the rate limit.
+    async function condRead(path, st) {
+      const h = headers(true);
+      if (st.etag) h["If-None-Match"] = st.etag;
+      const response = await ghFetch(readUrl(path), { headers: h });
+      if (response.status === 304) return { same: true };
+      if (response.status === 404) { st.etag = null; st.last = null; return { missing: true }; }
+      if (!response.ok) throw await httpError(response, path);
+      st.etag = response.headers.get("ETag");
+      const text = await response.text();
+      if (st.last === text) return { same: true };      // no ETag available: compare the content instead
+      st.last = text;
+      return { text };
+    }
+    // Read-modify-write of one JSON file. mutate(current) returns the new content or null (= nothing to change).
+    // The file is read fresh each time, so two devices changing different parts do not overwrite each other.
+    async function rmw(path, mutate, message) {
       const maxAttempts = 5;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        let sha = shaBox && attempt === 1 ? shaBox.sha : null;
-        if (!sha) {
-          const getResponse = await ghFetch(readUrl(path, `-${attempt}`), { headers: headers(false) });
-          if (getResponse.ok) {
-            sha = (await getResponse.json()).sha || null;
-            if (!sha) throw new Error(`GitHub did not return a SHA for ${path}.`);
-          } else if (getResponse.status !== 404) {
-            throw await httpError(getResponse, path);
-          }
+        const getResponse = await ghFetch(readUrl(path, `-${attempt}`), { headers: headers(false) });
+        let current = null;
+        let sha = null;
+        if (getResponse.ok) {
+          const meta = await getResponse.json();
+          sha = meta.sha || null;
+          try { current = JSON.parse(utf8FromBase64(meta.content || "")); } catch (_) { current = null; }
+        } else if (getResponse.status !== 404) {
+          throw await httpError(getResponse, path);
         }
-        const body = { message, content, branch: BRANCH };
+        const next = mutate(current && typeof current === "object" && !Array.isArray(current) ? current : {});
+        if (next === null || next === undefined) return false;
+        const body = { message, content: base64Utf8(JSON.stringify(next, null, 2) + "\n"), branch: BRANCH };
         if (sha) body.sha = sha;
         const putResponse = await ghFetch(fileUrl(path), {
           method: "PUT",
           headers: { ...headers(false), "Content-Type": "application/json" },
           body: JSON.stringify(body)
-        }, timeoutMs);
-        if (putResponse.ok) {
-          if (shaBox) {
-            try { shaBox.sha = (await putResponse.json()).content.sha || null; } catch (_) { shaBox.sha = null; }
-          }
-          return;
-        }
-        if (shaBox) shaBox.sha = null;
+        });
+        if (putResponse.ok) return true;
         const retryable = putResponse.status === 409 || putResponse.status === 422 || putResponse.status >= 500;
         if (retryable && attempt < maxAttempts) {
-          await new Promise(resolve => setTimeout(resolve, Math.min(250 * 2 ** (attempt - 1), 2500)));
+          await sleep(Math.min(250 * 2 ** (attempt - 1), 2500));
           continue;
         }
         throw await httpError(putResponse, path);
       }
       throw new Error(`Could not update ${path}.`);
     }
-    function writeLive(enabled, id) {
-      const body = { live: enabled, id };
-      if (enabled && liveUnlimited) body.unlimited = true;
-      if (enabled && recording) {
-        body.track = true; body.tid = trackId; body.tname = trackName;
-        if (trackUnl) body.tunl = true;
-      }
-      const what = !enabled ? "OFF" : (liveUnlimited ? "ON (no limit)" : "ON") + (recording ? `, recording ${trackName}${trackUnl ? " (no limit)" : ""}` : "");
-      return putJsonFile(LIVE_PATH, JSON.stringify(body, null, 2) + "\n", `LIVE ${what}`, null);
+    function chained() {
+      let tail = Promise.resolve();
+      return job => {            // runs jobs one after the other
+        const run = () => job();
+        const p = tail.then(run, run);
+        tail = p.catch(() => {});
+        return p;
+      };
     }
+    const liveQueue = chained();
+    const viewQueue = chained();
 
     // ---------- errors ----------
     function describe(error) {
       if (error && error.name === "AbortError") return "Network timeout. Check your connection.";
       if (error && error.status === 401) return "Token rejected (wrong or expired).";
       if (error && (error.status === 403 || error.status === 429)) return "GitHub refused the request (token permissions or rate limit).";
-      if (error && error.status === 404) return "Not found. Check the repository name, config/maps.json, and that the token can access the repository.";
+      if (error && error.status === 404) return "Not found. Check the repository name, config/gmap.json, and that the token can access the repository.";
       return (error && error.message) || String(error);
     }
     function relock(message) {
       token = "";
-      stopLocal();                   // only this page stops looking: the tracker carries on and is taken over after unlocking
+      watching = false;
       button.disabled = true;
       trackButton.disabled = true;
       layersButton.disabled = measureButton.disabled = true;
@@ -398,12 +476,26 @@
       showStatus(describe(error), "error");
     }
 
-    // ---------- map ----------
-    function setButtonState(on) {
-      button.classList.toggle("live", on);
-      updateLabels();
-      button.setAttribute("aria-pressed", String(on));
+    // ---------- time ----------
+    // GPS UTC date "2026-10-17" + time "16:00:00"  ->  "2026-10-18 00:00:00" (Malaysia time), or null
+    function mytFromUtc(date, utc) {
+      if (typeof date !== "string" || typeof utc !== "string") return null;
+      const ms = Date.parse(date + "T" + utc + "Z");
+      if (!Number.isFinite(ms)) return null;
+      const d = new Date(ms + MYT_OFFSET_MS);
+      return d.getUTCFullYear() + "-" + pad2(d.getUTCMonth() + 1) + "-" + pad2(d.getUTCDate()) + " " +
+        pad2(d.getUTCHours()) + ":" + pad2(d.getUTCMinutes()) + ":" + pad2(d.getUTCSeconds());
     }
+    function ageText(ms) {
+      const s = Math.max(0, Math.round(ms / 1000));
+      if (s < 60) return s + " s";
+      if (s < 3600) return Math.floor(s / 60) + " min";
+      if (s < 86400) return Math.floor(s / 3600) + " h " + Math.floor((s % 3600) / 60) + " min";
+      return Math.floor(s / 86400) + " d";
+    }
+    function secsLeft(at) { return Math.max(0, Math.ceil((at - Date.now()) / 1000)); }
+
+    // ---------- the map ----------
     // Keep the map exactly as tall as the real screen (covers status bar and home indicator areas).
     function fitMap() {
       const el = $("map");
@@ -418,54 +510,124 @@
     window.addEventListener("orientationchange", () => setTimeout(fitMap, 300));
     fitMap();
 
+    // What this device's user did recently. Map changes are shared only when they come from the user (not when they were
+    // applied from another device), and changes from other devices wait while the user is touching the map.
+    let lastUserAt = 0;
+    let pointersDown = 0;
+    const noteUser = () => { lastUserAt = Date.now(); };
+    const userActive = () => Date.now() - lastUserAt < USER_ACTIVE_MS;
+    const userBusy = () => {
+      if (pointersDown > 0 && Date.now() - lastUserAt > 10000) pointersDown = 0;   // a lost pointerup must not block forever
+      return pointersDown > 0 || Date.now() - lastUserAt < VIEW_IDLE_MS;
+    };
+    document.addEventListener("pointerdown", () => { pointersDown++; noteUser(); }, true);
+    for (const type of ["pointerup", "pointercancel"]) {
+      document.addEventListener(type, () => { pointersDown = Math.max(0, pointersDown - 1); noteUser(); }, true);
+    }
+    for (const type of ["wheel", "keydown", "touchstart", "touchmove"]) {
+      document.addEventListener(type, noteUser, { capture: true, passive: true });
+    }
+    window.addEventListener("blur", () => { pointersDown = 0; });
+
     // ---------- map tools in the bottom row: Layers, Street View, Measure ----------
-    const layersButton = $("layersButton");
-    const streetButton = $("streetButton");
-    const measureButton = $("measureButton");
-    const layersPanel = $("layersPanel");
     let toolMode = "none";            // "none" | "measure"
     let measurePts = [], measureLine = null, measureDots = [];
+    let mapType = "roadmap";
+    const layerOn = { traffic: false, transit: false, bike: false };
+    const layerObj = { traffic: null, transit: null, bike: null };
+    const layerClass = { traffic: "TrafficLayer", transit: "TransitLayer", bike: "BicyclingLayer" };
+    const layerBtn = { traffic: "layerTraffic", transit: "layerTransit", bike: "layerBike" };
+
     function fmtDistance(m) { return m >= 1000 ? (m / 1000).toFixed(2) + " km" : Math.round(m) + " m"; }
     function clearMeasure() {
       measurePts = [];
+      renderMeasure();
+    }
+    function renderMeasure() {
+      const gmaps = google.maps;
       if (measureLine) measureLine.setMap(null);
       measureLine = null;
       measureDots.forEach(d => d.setMap(null));
       measureDots = [];
+      if (measurePts.length) {
+        measureLine = new gmaps.Polyline({ map, path: measurePts, strokeColor: "#1a73e8", strokeWeight: 3, clickable: false });
+        for (const p of measurePts) {
+          measureDots.push(new gmaps.Marker({ map, position: p, clickable: false,
+            icon: { path: gmaps.SymbolPath.CIRCLE, scale: 4, fillColor: "#fff", fillOpacity: 1, strokeColor: "#1a73e8", strokeWeight: 2 } }));
+        }
+      }
+      let total = 0;
+      for (let i = 1; i < measurePts.length; i++) total += distanceM(measurePts[i - 1].lat, measurePts[i - 1].lng, measurePts[i].lat, measurePts[i].lng);
+      measureButton.textContent = toolMode === "measure" && measurePts.length ? fmtDistance(total) : "Measure";
     }
-    function setToolMode(mode) {
+    function setToolMode(mode, silent) {
       toolMode = mode;
       measureButton.classList.toggle("on", mode === "measure");
-      measureButton.textContent = "Measure";
-      if (mode !== "measure") clearMeasure();
+      if (mode !== "measure") clearMeasure(); else renderMeasure();
       if (map) map.setOptions({ clickableIcons: mode === "none", draggableCursor: mode === "none" ? null : "crosshair" });
+      if (!silent) markDirty("measure");
     }
+    function setMapType(type, fromRemote) {
+      if (!MAP_TYPES.includes(type)) return;
+      mapType = type;
+      if (map) map.setMapTypeId(type);
+      layersButton.querySelector(".val").textContent = MAP_TYPE_NAMES[type];
+      if (!fromRemote) markDirty("cam");
+    }
+    function setLayer(name, on, fromRemote) {
+      if (!map) return;
+      if (!layerObj[name]) layerObj[name] = new google.maps[layerClass[name]]();
+      layerOn[name] = on;
+      layerObj[name].setMap(on ? map : null);
+      $(layerBtn[name]).classList.toggle("on", on);
+      if (!fromRemote) markDirty("cam");
+    }
+    function closeLayers() {
+      layersPanel.hidden = true;
+      layersButton.classList.remove("on");
+      layersButton.setAttribute("aria-expanded", "false");
+    }
+    function openLayers() {
+      layersPanel.hidden = false;
+      layersButton.classList.add("on");
+      layersButton.setAttribute("aria-expanded", "true");
+    }
+    function setFollowPaused(value) {
+      if (followPaused === value) return;
+      followPaused = value;
+      if (userActive()) markDirty("cam");
+    }
+
     function setupMapTools() {
       const gmaps = google.maps;
-      const layers = { traffic: null, transit: null, bike: null };
-      const layerClass = { traffic: "TrafficLayer", transit: "TransitLayer", bike: "BicyclingLayer" };
-      const typeButtons = { roadmap: $("layerRoad"), hybrid: $("layerSat"), terrain: $("layerTerrain") };
-      for (const [type, btn] of Object.entries(typeButtons)) {
-        btn.addEventListener("click", () => {
-          map.setMapTypeId(type);
-          for (const [t, b] of Object.entries(typeButtons)) b.classList.toggle("on", t === type);
-        });
+      for (const name of Object.keys(layerBtn)) {
+        $(layerBtn[name]).addEventListener("click", () => setLayer(name, !layerOn[name], false));
       }
-      for (const [name, id] of [["traffic", "layerTraffic"], ["transit", "layerTransit"], ["bike", "layerBike"]]) {
-        $(id).addEventListener("click", () => {
-          if (!layers[name]) layers[name] = new gmaps[layerClass[name]]();
-          const on = !$(id).classList.contains("on");
-          layers[name].setMap(on ? map : null);
-          $(id).classList.toggle("on", on);
-        });
-      }
-      layersButton.addEventListener("click", () => {
-        const open = layersPanel.hidden;
-        layersPanel.hidden = !open;
-        layersButton.classList.toggle("on", open);
-        layersButton.setAttribute("aria-expanded", String(open));
+
+      // Layers: tap = next map type (Default -> Satellite -> Terrain), hold 5 s = the map-details panel.
+      let holdTimer = null;
+      let swallow = false;
+      layersButton.style.setProperty("--hold", `${LAYERS_HOLD_MS}ms`);
+      const endHold = () => { clearTimeout(holdTimer); holdTimer = null; layersButton.classList.remove("holding"); };
+      layersButton.addEventListener("pointerdown", event => {
+        if (layersButton.disabled || (event.pointerType === "mouse" && event.button !== 0)) return;
+        clearTimeout(holdTimer);
+        swallow = false;
+        layersButton.classList.add("holding");
+        holdTimer = setTimeout(() => {
+          holdTimer = null;
+          layersButton.classList.remove("holding");
+          swallow = true;                         // the click that follows the release must not switch the map type
+          if (layersPanel.hidden) openLayers(); else closeLayers();
+        }, LAYERS_HOLD_MS);
       });
-      const closeLayers = () => { layersPanel.hidden = true; layersButton.classList.remove("on"); layersButton.setAttribute("aria-expanded", "false"); };
+      for (const type of ["pointerup", "pointercancel", "pointerleave"]) layersButton.addEventListener(type, endHold);
+      layersButton.addEventListener("contextmenu", event => event.preventDefault());
+      layersButton.addEventListener("click", () => {
+        if (swallow) { swallow = false; return; }
+        if (!layersPanel.hidden) { closeLayers(); return; }       // the tap that closes the panel changes nothing else
+        setMapType(MAP_TYPES[(MAP_TYPES.indexOf(mapType) + 1) % MAP_TYPES.length], false);
+      });
 
       // Street View: Google's own little person (right side of the map). Drag it onto a blue street and drop it.
       // The panorama's own close button would sit under the status bar, so the bottom row gets "Exit Street View".
@@ -474,25 +636,31 @@
       streetView.addListener("visible_changed", () => {
         const on = streetView.getVisible();
         streetButton.hidden = !on;
-        if (on) { closeLayers(); setToolMode("none"); }
+        if (on) { closeLayers(); setToolMode("none", true); }
+        if (userActive()) markDirty("sv");
       });
+      streetView.addListener("position_changed", () => { if (userActive()) markDirty("sv"); });
+      streetView.addListener("pov_changed", () => { if (userActive()) markDirty("sv"); });
       streetButton.addEventListener("click", () => streetView.setVisible(false));
-      measureButton.addEventListener("click", () => setToolMode(toolMode === "measure" ? "none" : "measure"));
+      measureButton.addEventListener("click", () => setToolMode(toolMode === "measure" ? "none" : "measure", false));
 
       map.addListener("click", event => {
         closeLayers();
-        if (toolMode !== "measure" || !event || !event.latLng) return;
+        if (bubbleOpen) { openBubble(false); markDirty("bubble"); }
+        if (toolMode !== "measure" || !event || !event.latLng) {
+          // While you look at a place the map must not jump back to the tracker.
+          setFollowPaused(Boolean(event && event.placeId) || followPaused);
+          return;
+        }
         if (event.stop) event.stop();                 // no place popup while a tool is active
-        const lat = event.latLng.lat(), lng = event.latLng.lng();
-        measurePts.push({ lat, lng });
-        if (!measureLine) measureLine = new gmaps.Polyline({ map, strokeColor: "#1a73e8", strokeWeight: 3, clickable: false });
-        measureLine.setPath(measurePts);
-        measureDots.push(new gmaps.Marker({ map, position: measurePts[measurePts.length - 1], clickable: false,
-          icon: { path: gmaps.SymbolPath.CIRCLE, scale: 4, fillColor: "#fff", fillOpacity: 1, strokeColor: "#1a73e8", strokeWeight: 2 } }));
-        let total = 0;
-        for (let i = 1; i < measurePts.length; i++) total += distanceM(measurePts[i - 1].lat, measurePts[i - 1].lng, measurePts[i].lat, measurePts[i].lng);
-        measureButton.textContent = fmtDistance(total);
+        measurePts.push({ lat: event.latLng.lat(), lng: event.latLng.lng() });
+        renderMeasure();
+        markDirty("measure");
       });
+      map.addListener("dragstart", () => setFollowPaused(true));
+      map.addListener("dragend", () => { if (userActive()) markDirty("cam"); });
+      map.addListener("zoom_changed", () => { if (userActive()) markDirty("cam"); });
+      map.addListener("idle", () => { if (userActive()) markDirty("cam"); });
     }
 
     const MAP_IDLE_TIMEOUT_MS = 15000;
@@ -536,10 +704,8 @@
               gestureHandling: "greedy",
               keyboardShortcuts: false
             });
-            // Do not stop the click (no e.stop()): Google then shows its normal place popup.
-            // While you are looking at a place the map must not jump back to the tracker.
-            map.addListener("click", event => { followPaused = Boolean(event && event.placeId); });
-            map.addListener("dragstart", () => { followPaused = true; });
+            info = new google.maps.InfoWindow({ disableAutoPan: true, content: buildBubble() });
+            info.addListener("closeclick", () => { bubbleOpen = false; markDirty("bubble"); });
             setupMapTools();
             let idled = false;
             map.addListener("idle", () => { idled = true; hideMapProblem(); });
@@ -559,18 +725,122 @@
         document.head.appendChild(script);
       });
     }
+
+    // ---------- the GPS marker: colour = connection, tap = data bubble ----------
+    // green: the tracker's data keeps arriving.  red: nothing new for STALE_MS (the tracker has a problem).
+    // grey: LIVE is off, or this device cannot reach GitHub.
+    function connStatus() {
+      if (!LS.live) return "grey";
+      if (netFails >= 2 || navigator.onLine === false) return "grey";
+      return Date.now() - dataAt <= STALE_MS ? "green" : "red";
+    }
+    function pinIcon(status) {
+      return { path: "M0 0C-3-9-11-13-11-21A11 11 0 1 1 11-21C11-13 3-9 0 0Z", fillColor: PIN_COLORS[status], fillOpacity: 1,
+        strokeColor: "#ffffff", strokeWeight: 2, scale: 1.25 };
+    }
+    function applyMarkerStatus() {
+      const s = connStatus();
+      if (marker && s !== shownStatus) { shownStatus = s; marker.setIcon(pinIcon(s)); }
+      const dot = bubbleEls && bubbleEls.dot;
+      if (dot) dot.style.background = PIN_COLORS[s];
+    }
+    let cameraFromShared = false;
     function updateMarker(lat, lng) {
       const position = { lat, lng };
       if (!marker) {
-        marker = new google.maps.Marker({ map, position, title: "Current GPS location", optimized: false, zIndex: 1000 });
-        // Tapping the red marker makes the map follow the tracker again.
-        marker.addListener("click", () => { followPaused = false; map.panTo(marker.getPosition()); });
-        map.setCenter(position);
-        map.setZoom(16);
+        shownStatus = connStatus();
+        marker = new google.maps.Marker({ map, position, title: "Current GPS location", optimized: false, zIndex: 1000, icon: pinIcon(shownStatus) });
+        marker.addListener("click", onMarkerClick);
+        if (!cameraFromShared) { map.setCenter(position); map.setZoom(16); }
+        else if (!followPaused) map.panTo(position);
+        if (bubbleOpen) openBubble(true);
       } else {
         marker.setPosition(position);
         if (!followPaused) map.panTo(position);
       }
+    }
+    // Tapping the marker: the map follows the tracker again and the data bubble opens.
+    function onMarkerClick() {
+      noteUser();
+      followPaused = false;
+      map.panTo(marker.getPosition());
+      openBubble(true);
+      markDirty("cam");
+      markDirty("bubble");
+    }
+
+    let bubbleEls = null;
+    function buildBubble() {
+      const root = document.createElement("div");
+      root.className = "gb";
+      const st = document.createElement("div");
+      st.className = "st";
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      const stText = document.createElement("span");
+      st.append(dot, stText);
+      const table = document.createElement("table");
+      const cells = {};
+      for (const [key, label] of [["date", "Date"], ["time", "Time"], ["lat", "Latitude"], ["lng", "Longitude"], ["alt", "Altitude"],
+        ["spd", "Speed"], ["sats", "Satellites"], ["hdop", "HDOP"], ["crs", "Course"]]) {
+        const tr = document.createElement("tr");
+        const a = document.createElement("td");
+        a.textContent = label;
+        const b = document.createElement("td");
+        tr.append(a, b);
+        table.append(tr);
+        cells[key] = { tr, b };
+      }
+      const ago = document.createElement("div");
+      ago.className = "ago";
+      root.append(st, table, ago);
+      bubbleEls = { root, dot, stText, cells, ago };
+      return root;
+    }
+    function refreshBubble() {
+      if (!bubbleEls) return;
+      const f = fixInfo;
+      const s = connStatus();
+      const now = Date.now();
+      bubbleEls.dot.style.background = PIN_COLORS[s];
+      bubbleEls.stText.textContent = s === "green" ? "Connected"
+        : s === "red" ? `Disconnected · last data ${ageText(now - dataAt)} ago`
+        : LS.live ? "No connection to GitHub (this device)" : "LIVE is off";
+      const show = (key, value) => {
+        const c = bubbleEls.cells[key];
+        c.tr.hidden = value === null;
+        if (value !== null) c.b.textContent = value;
+      };
+      const num = (v, digits, unit) => (isNum(v) ? v.toFixed(digits) + unit : null);
+      const dateTime = f && f.ts ? f.ts.split(" ") : null;
+      show("date", f ? (dateTime ? dateTime[0] : "-") : "-");
+      show("time", f ? (dateTime ? dateTime[1] : "-") : "-");
+      show("lat", f ? f.lat.toFixed(6) : "-");
+      show("lng", f ? f.lng.toFixed(6) : "-");
+      show("alt", f ? (num(f.alt, 1, " m") || "-") : "-");
+      show("spd", f ? (num(f.spd, 1, " km/h") || "-") : "-");
+      show("sats", f && isNum(f.sats) ? String(f.sats) : null);       // only when the data source has them
+      show("hdop", f && isNum(f.hdop) ? f.hdop.toFixed(1) : null);
+      show("crs", f && isNum(f.crs) ? Math.round(f.crs) + "°" : null);
+      bubbleEls.ago.textContent = `Updated ${ageText(now - dataAt)} ago · Malaysia time`;
+    }
+    function openBubble(on) {
+      bubbleOpen = on;
+      if (!info) return;
+      if (on && marker) {
+        refreshBubble();
+        info.open({ map, anchor: marker, shouldFocus: false });
+      } else if (!on) {
+        info.close();
+      }
+    }
+    // A newer position (from latest_location.json or from the CSV of a 60 s recording).
+    function offerFix(f) {
+      if (!validLatLng(f.lat, f.lng)) return;
+      if (fixInfo && f.ts && fixInfo.ts && f.ts < fixInfo.ts) return;
+      fixInfo = f;
+      updateMarker(f.lat, f.lng);
+      if (bubbleOpen) refreshBubble();
     }
 
     // ---------- footsteps ----------
@@ -594,7 +864,6 @@
     }
     const FOOT_PATH_RIGHT = footPath(false);
     const FOOT_PATH_LEFT = footPath(true);
-
     function footIcon(left, rotation) {
       return {
         path: left ? FOOT_PATH_LEFT : FOOT_PATH_RIGHT,
@@ -619,409 +888,614 @@
       const x = Math.cos(lat1 * r) * Math.sin(lat2 * r) - Math.sin(lat1 * r) * Math.cos(lat2 * r) * Math.cos((lng2 - lng1) * r);
       return (Math.atan2(y, x) / r + 360) % 360;
     }
-    function addFootstep(lat, lng, course) {
-      let heading = lastHeading;
-      let known = false;
-      if (lastStep && distanceM(lastStep.lat, lastStep.lng, lat, lng) >= STEP_TURN_MIN_M) {
-        heading = bearingDeg(lastStep.lat, lastStep.lng, lat, lng);   // walking direction from the last two fixes
-        known = true;
-      } else if (!lastStep && Number.isFinite(course)) {
-        heading = course;
-      }
-      const left = footsteps.length % 2 === 0;                       // alternate left / right foot
-      // The very first print has no direction yet: turn it once the second fix shows where you went.
-      if (known && footsteps.length === 1 && !footsteps[0].aimed) {
-        footsteps[0].marker.setIcon(footIcon(footsteps[0].left, heading));
-        footsteps[0].aimed = true;
-      }
-      const stepMarker = new google.maps.Marker({
-        map,
-        position: { lat, lng },
-        icon: footIcon(left, heading),
-        clickable: false,          // taps pass through to the map, so place names stay clickable
-        optimized: true,
-        zIndex: 1
-      });
-      footsteps.push({ marker: stepMarker, left, aimed: footsteps.length > 0 });
-      lastStep = { lat, lng };
-      lastHeading = heading;
-    }
-    function clearFootsteps() {
-      for (const step of footsteps) step.marker.setMap(null);
-      footsteps = [];
-      lastStep = null;
-      lastHeading = 0;
+    const angDiff = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+    function circMean(list) {
+      let sx = 0, sy = 0;
+      for (const a of list) { sx += Math.sin(a * Math.PI / 180); sy += Math.cos(a * Math.PI / 180); }
+      return (Math.atan2(sx, sy) * 180 / Math.PI + 360) % 360;
     }
 
-    // ---------- track recording (done by the tracker) ----------
-    function setTrackState(on) {
-      trackButton.classList.toggle("rec", on);
-      trackButton.setAttribute("aria-pressed", String(on));
+    // The footprints are always rebuilt from the recording's CSV rows, in order, so every device draws the same ones.
+    // Walking direction of print i (it needs the next point, so the newest print is provisional until the next row arrives):
+    //   - look ahead: from the previous point to the NEXT point;
+    //   - standing still (speed under STILL_KMH) or neighbours closer than MIN_CHORD_M: keep the previous direction;
+    //   - one point swinging against both neighbours (a GPS error) is replaced by their average, otherwise mild smoothing.
+    let pts = [];                    // the rows drawn: {key, ts, lat, lng, spd}
+    let H = [];                      // direction of each print, degrees clockwise from north
+    let drawn = [];                  // {marker, left, h} parallel to pts
+    function rawHeading(i) {
+      const n = pts.length;
+      if (i < 0 || i >= n) return null;
+      const a = pts[Math.max(i - 1, 0)];
+      const b = pts[Math.min(i + 1, n - 1)];
+      if (a === b) return null;
+      if (isNum(pts[i].spd) && pts[i].spd < STILL_KMH) return null;
+      if (distanceM(a.lat, a.lng, b.lat, b.lng) < MIN_CHORD_M) return null;
+      return bearingDeg(a.lat, a.lng, b.lat, b.lng);
     }
-    async function listDir(dir) {
-      const response = await ghFetch(readUrl(dir), { headers: headers(false) });
-      if (response.status === 404) return [];
-      if (!response.ok) throw await httpError(response, dir);
-      const list = await response.json();
-      return Array.isArray(list) ? list : [];
-    }
-    async function nextTrackName() {
-      let highest = 0;
-      for (const item of await listDir(TRACK_DIR)) {
-        const m = /^track(\d+)(?:_\d+)?\.json$/.exec((item && item.name) || "");
-        if (m) highest = Math.max(highest, parseInt(m[1], 10));
+    function recomputeHeadings(from) {
+      const n = pts.length;
+      for (let i = Math.max(0, from); i < n; i++) {
+        const raw = rawHeading(i);
+        const prev = i > 0 ? H[i - 1] : null;
+        let h;
+        if (raw === null) {
+          if (prev !== null) h = prev;
+          else {                                         // the very first prints: use the first direction that is known
+            h = 0;
+            for (let j = 0; j < Math.min(n, 12); j++) { const q = rawHeading(j); if (q !== null) { h = q; break; } }
+          }
+        } else {
+          const next = rawHeading(i + 1);
+          if (prev !== null && next !== null && angDiff(raw, prev) > SWING_DEG && angDiff(raw, next) > SWING_DEG && angDiff(prev, next) < AGREE_DEG) h = circMean([prev, next]);
+          else if (prev !== null) h = circMean([prev, raw, raw]);
+          else h = raw;
+        }
+        H[i] = h;
       }
-      return `track${highest + 1}`;
     }
-    // A saved point is [date, secs, lat_e6, lon_e6, alt_dm, spd_dkmh, crs_d, sats, hdop_d]
-    function rowPosition(row) {
-      if (!Array.isArray(row) || row.length < 7) return null;
-      const lat = row[2] / 1e6, lng = row[3] / 1e6;
-      if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
-      return { lat, lng, course: typeof row[6] === "number" ? row[6] / 10 : NaN };
+    function makeStep(i) {
+      const left = i % 2 === 0;                          // alternate left / right foot
+      return {
+        left,
+        h: H[i],
+        marker: new google.maps.Marker({
+          map,
+          position: { lat: pts[i].lat, lng: pts[i].lng },
+          icon: footIcon(left, H[i]),
+          clickable: false,          // taps pass through to the map, so place names stay clickable
+          optimized: true,
+          zIndex: 1
+        })
+      };
     }
-    // Draws the points of one part file that are not drawn yet. Returns the position of the newest one.
-    function drawNewRows(num, rows, sha) {
-      const known = partState.get(num) || { sha: null, drawn: 0 };
-      let newest = null;
-      for (let i = known.drawn; i < rows.length; i++) {
-        const p = rowPosition(rows[i]);
-        if (!p) continue;
-        addFootstep(p.lat, p.lng, p.course);
-        newest = p;
+    function appendPoints(rows) {
+      const first = pts.length;
+      for (const r of rows) pts.push(r);
+      const from = Math.max(0, first - 3);               // only the last few prints can change their direction
+      recomputeHeadings(from);
+      for (let i = first; i < pts.length; i++) drawn[i] = makeStep(i);
+      for (let i = from; i < first; i++) {
+        if (angDiff(drawn[i].h, H[i]) > 0.5) { drawn[i].h = H[i]; drawn[i].marker.setIcon(footIcon(drawn[i].left, H[i])); }
       }
-      partState.set(num, { sha: sha === undefined ? known.sha : sha, drawn: Math.max(known.drawn, rows.length) });
-      return newest;
     }
-    // No-limit recording: the tracker uploads in batches (part files). Read what is new.
-    async function syncTrack() {
-      if (!trackName || syncing || !token || !map) return;
-      syncing = true;
-      const name = trackName;
+    function clearDrawn() {
+      for (const d of drawn) d.marker.setMap(null);
+      pts = [];
+      H = [];
+      drawn = [];
+    }
+
+    // The shared footsteps source (view_state.steps): the track id, the CSV files of the recording and a "cleared up to" time.
+    const steps = { tid: null, src: [], after: null };
+    const stepData = new Map();      // "dir/base" -> { dir, base, rows (60 s file), chunks (no-limit files), loaded }
+    let stepsBusy = false;
+    let stepsDue = 0;
+    let stepsFinalAt = [];
+    let segPending = "";
+
+    function segData(dir, base) {
+      const k = dir + "/" + base;
+      let seg = stepData.get(k);
+      if (!seg) { seg = { dir, base, rows: [], chunks: [], st: { etag: null, last: null }, loaded: false }; stepData.set(k, seg); }
+      return seg;
+    }
+    function parseCsv(text) {
+      const out = [];
+      const lines = String(text).split("\n");
+      for (let i = lines[0] && lines[0].startsWith("gps_date") ? 1 : 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        const f = line.split(",");
+        if (f.length < 4) continue;
+        const lat = parseFloat(f[2]), lng = parseFloat(f[3]);
+        if (!validLatLng(lat, lng)) continue;
+        out.push({ key: line, ts: f[0] + " " + f[1], lat, lng,
+          alt: f[4] === undefined || f[4] === "" ? NaN : parseFloat(f[4]),
+          spd: f[5] === undefined || f[5] === "" ? NaN : parseFloat(f[5]) });
+      }
+      return out;
+    }
+    async function fetchCsv(path, st) {
+      const r = await condRead(path, st);
+      if (r.same) return { same: true };
+      if (r.missing) return { missing: true };
+      return { rows: parseCsv(r.text) };
+    }
+    async function syncSegment(seg) {
+      if (seg.dir === DIR_60) {
+        const r = await fetchCsv(`${DIR_60}/${seg.base}.csv`, seg.st);
+        if (r.rows) seg.rows = r.rows;
+        seg.loaded = true;
+        return;
+      }
+      if (!seg.chunks.length) seg.chunks.push({ n: 1, rows: [], st: { etag: null, last: null } });
+      for (let i = 0; i < seg.chunks.length; i++) {
+        const c = seg.chunks[i];
+        const last = i === seg.chunks.length - 1;
+        if (c.rows.length >= CHUNK_ROWS && !last) continue;                  // complete: nothing more to read
+        const r = await fetchCsv(`${DIR_INF}/${seg.base}_${String(c.n).padStart(3, "0")}.csv`, c.st);
+        if (r.rows) c.rows = r.rows;
+        if (last && c.rows.length >= CHUNK_ROWS) seg.chunks.push({ n: c.n + 1, rows: [], st: { etag: null, last: null } });
+      }
+      seg.loaded = true;
+    }
+    function wantedRows() {
+      const out = [];
+      for (const s of steps.src) {
+        const seg = stepData.get(s[0] + "/" + s[1]);
+        if (!seg) continue;
+        const rows = seg.dir === DIR_60 ? seg.rows : [].concat(...seg.chunks.map(c => c.rows));
+        for (const r of rows) if (!steps.after || r.ts > steps.after) out.push(r);
+      }
+      return out;
+    }
+    function syncDrawn() {
+      if (!map) return;
+      const want = wantedRows();
+      let k = pts.length;
+      const prefix = k <= want.length && (k === 0 || (pts[0].key === want[0].key && pts[k - 1].key === want[k - 1].key));
+      if (!prefix) { clearDrawn(); k = 0; }
+      if (k < want.length) appendPoints(want.slice(k));
+      // During a 60 s recording the CSV is fresher than the status file: it moves the marker too.
+      if (recordingForSteps() && !LS.tunl && want.length) {
+        const r = want[want.length - 1];
+        offerFix({ ts: r.ts, lat: r.lat, lng: r.lng, alt: r.alt, spd: r.spd, sats: null, hdop: null, crs: null });
+      }
+    }
+    function recordingForSteps() {
+      return LS.live && LS.track && LS.tid !== null && LS.tid === steps.tid;
+    }
+    function stepsInterval() {                    // ms until the next read, or null = no reading needed
+      if (!steps.src.length) return null;
+      for (const s of steps.src) if (!segData(s[0], s[1]).loaded) return 1500;   // first load (or retry)
+      if (recordingForSteps()) return LS.tunl ? STEPS_POLL_INF_MS : STEPS_POLL_60_MS;
+      return null;
+    }
+    async function runSteps(final) {
+      stepsBusy = true;
       try {
-        const pattern = new RegExp(`^${name}_(\\d+)\\.json$`);
-        const items = [];
-        for (const item of await listDir(TRACK_DIR)) {
-          const m = pattern.exec((item && item.name) || "");
-          if (m) items.push({ num: parseInt(m[1], 10), sha: item.sha, path: item.path || `${TRACK_DIR}/${item.name}` });
+        const sources = steps.src.slice();
+        for (const s of sources) {
+          if (s[0] + "/" + s[1] !== steps.src.find(x => x[0] === s[0] && x[1] === s[1])?.join("/")) continue;
+          await syncSegment(segData(s[0], s[1]));
         }
-        items.sort((a, b) => a.num - b.num);
-        for (const item of items) {
-          const known = partState.get(item.num);
-          if (known && known.sha === item.sha) continue;
-          const data = await readJson(item.path);
-          if (name !== trackName) return;               // another track was started meanwhile
-          drawNewRows(item.num, data && data.track === name && data.tid === trackId && Array.isArray(data.pts) ? data.pts : [], item.sha);
-        }
+        noteNet(true);
+        if (recordingForSteps()) noteDataFromCsv();
+        syncDrawn();
+        const iv = stepsInterval();
+        stepsDue = Date.now() + (iv === null ? 1000 : iv);
+        if (final) stepsFinalAt.shift();
       } catch (error) {
+        noteNet(false, error);
+        stepsDue = Date.now() + 3000;
         handleError(error);
       } finally {
-        syncing = false;
+        stepsBusy = false;
       }
     }
-    function scheduleSync(delay) {
-      clearTimeout(syncTimer);
-      syncTimer = setTimeout(async () => {
-        syncTimer = null;
-        if (document.visibilityState !== "hidden") await syncTrack();
-        if (recording && trackUnl) scheduleSync(TRACK_SYNC_MS);
-      }, delay);
-    }
-    // After a recording ends the tracker uploads its last points within a few seconds: look twice.
-    function finalSync() {
-      clearTimeout(syncTimer);
-      syncTimer = setTimeout(() => { syncTimer = null; syncTrack(); }, FINAL_SYNC_MS[0]);
-      setTimeout(() => { if (!recording) syncTrack(); }, FINAL_SYNC_MS[1]);
-    }
-    function beginTrack(name, id, unl) {
-      trackName = name;
-      trackId = id;
-      trackUnl = unl;
-      recSeen = false;
-      trackSynced = false;
-      trackEndsAt = 0;
-      trackStartedAt = Date.now();
-      partState = new Map();
-      recording = true;
-      setTrackState(true);
-      updateLabels();
-    }
-    function endTrackLocal() {
-      recording = false;
-      trackUnl = false;
-      trackSynced = false;
-      setTrackState(false);
-      clearTimeout(syncTimer);
-      syncTimer = null;
-      updateLabels();
-    }
-    // The tracker ends a 60 s recording by itself. The page learns about it from the countdown, saves nothing,
-    // and only tells the tracker that the recording is over (live.json without the track).
-    async function finishTrack60() {
-      if (!recording) return;
-      endTrackLocal();
-      finalSync();
-      if (liveOn) await writeLive(true, sessionId);
-    }
-    async function stopTracking() {
-      if (!recording) return;
-      endTrackLocal();
-      finalSync();
-      if (liveOn) await writeLive(true, sessionId);      // LIVE carries on in its own mode
-    }
-    // unl = false: tap, 60 s, every point at once.   unl = true: hold 5 s, no limit, batches, page may be closed.
-    async function startTracking(unl) {
-      const name = await nextTrackName();            // before anything changes: track1, track2, ... never overwritten
-      clearFootsteps();                              // the previous footsteps stay until this click
-      const liveWas = liveUnlimited;
-      if (unl) liveUnlimited = true;                 // a no-limit recording needs a no-limit LIVE
-      beginTrack(name, newSessionId(), unl);
-      try {
-        if (!liveOn) await startLive();              // the first command carries the track too
-        else await writeLive(true, sessionId);
-      } catch (error) {
-        endTrackLocal();
-        liveUnlimited = liveOn ? liveWas : false;
-        throw error;
+    // Rows that changed since the last look prove that the tracker is online.
+    let lastCsvCount = 0;
+    function noteDataFromCsv() {
+      let count = 0;
+      for (const s of steps.src) {
+        const seg = stepData.get(s[0] + "/" + s[1]);
+        if (!seg) continue;
+        count += seg.dir === DIR_60 ? seg.rows.length : seg.chunks.reduce((a, c) => a + c.rows.length, 0);
       }
-      setButtonState(true);
-      if (unl) scheduleSync(TRACK_SYNC_MS);
+      if (count > lastCsvCount) { lastCsvCount = count; if (!firstReport) dataAt = Date.now(); }
+      else if (count < lastCsvCount) lastCsvCount = count;
     }
-    async function promoteTrack() {                  // hold TRACK while a 60 s recording runs
-      const liveWas = liveUnlimited;
-      trackUnl = true;
-      liveUnlimited = true;
-      trackSynced = false;
-      setButtonState(true);
-      try {
-        await writeLive(true, sessionId);
-      } catch (error) {
-        trackUnl = false;
-        liveUnlimited = liveWas;
-        setButtonState(true);
-        throw error;
-      }
-      scheduleSync(TRACK_SYNC_MS);
+    function applySteps(s) {
+      s = s && typeof s === "object" ? s : {};
+      const tid = typeof s.tid === "string" && ID_RE.test(s.tid) ? s.tid : null;
+      const src = (Array.isArray(s.src) ? s.src : [])
+        .filter(x => Array.isArray(x) && DIR_RE.test(x[0]) && BASE_RE.test(x[1]))
+        .map(x => [x[0], x[1]]).slice(0, 8);
+      const after = typeof s.after === "string" && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s.after) ? s.after : null;
+      if (tid === steps.tid && after === steps.after && JSON.stringify(src) === JSON.stringify(steps.src)) return;
+      steps.tid = tid;
+      steps.src = src;
+      steps.after = after;
+      const keep = new Set(src.map(x => x[0] + "/" + x[1]));
+      for (const k of [...stepData.keys()]) if (!keep.has(k)) stepData.delete(k);
+      lastCsvCount = 0;
+      stepsDue = 0;                                // read at once
+      syncDrawn();                                 // clears or redraws what changed
+    }
+    // The tracker names its recording file only after its first point: whichever page sees it first adds it to the shared state.
+    function ensureSegment(d) {
+      if (!LS.track || d.rec_tid !== LS.tid || !DIR_RE.test(d.rec_dir || "") || !BASE_RE.test(d.rec_base || "")) return;
+      const key = d.rec_dir + "/" + d.rec_base;
+      if (steps.tid === LS.tid && steps.src.some(s => s[0] + "/" + s[1] === key)) return;
+      if (segPending === key) return;
+      segPending = key;
+      const tid = LS.tid, dir = d.rec_dir, base = d.rec_base;
+      setTimeout(async () => {
+        try {
+          let result = null;
+          await sharedWrite(cur => {
+            const s = cur.steps && cur.steps.tid === tid && Array.isArray(cur.steps.src) ? { ...cur.steps, src: cur.steps.src.slice() } : { tid, src: [], after: null };
+            if (s.src.some(x => x[0] === dir && x[1] === base)) return null;
+            s.src.push([dir, base]);
+            result = s;
+            return { ...cur, rev: (cur.rev | 0) + 1, by: clientId, steps: s };
+          }, "footsteps source");
+          if (result) applySteps(result);
+        } catch (error) {
+          handleError(error);
+        } finally {
+          segPending = "";
+        }
+      }, Math.random() * 800);
+    }
+    // Starting a new TRACK clears the footsteps of the previous one on every device.
+    function resetSteps(tid) {
+      const fresh = { tid, src: [], after: null };
+      applySteps(fresh);
+      return sharedWrite(cur => ({ ...cur, rev: (cur.rev | 0) + 1, by: clientId, steps: fresh }), "new track");
+    }
+    // Double tap on TRACK: clear the footsteps on every device (recording goes on).
+    function clearSteps() {
+      let newest = null;
+      for (const r of wantedRows()) if (!newest || r.ts > newest) newest = r.ts;
+      if (!newest) return Promise.resolve();
+      const after = newest;
+      applySteps({ ...steps, after });
+      return sharedWrite(cur => {
+        const s = cur.steps && typeof cur.steps === "object" ? { ...cur.steps } : { tid: steps.tid, src: steps.src.slice(), after: null };
+        s.after = after;
+        return { ...cur, rev: (cur.rev | 0) + 1, by: clientId, steps: s };
+      }, "clear footsteps");
     }
 
-    // ---------- live session ----------
-    function newSessionId() {
-      const bytes = new Uint8Array(9);
-      crypto.getRandomValues(bytes);
-      return Date.now().toString(36) + Array.from(bytes, b => (b % 36).toString(36)).join("");
+    // ---------- the shared map view (view_state.json) ----------
+    // Sections: cam (centre, zoom, map type, details, follow), measure, sv (Street View), bubble, steps.
+    // The Layers panel itself is not shared; the map type and the Traffic / Transit / Cycling choices are.
+    const view = { rev: -1 };
+    let pendingView = null;
+    let applyingRemote = false;
+    const viewDirty = new Set();
+    let viewTimer = null;
+    let lastViewWrite = 0;
+    let viewBackoffUntil = 0;
+
+    function sharedWrite(mutate, message) {
+      return viewQueue(() => rmw(VIEW_PATH, mutate, message));
     }
-    function stopLocal() {
-      liveOn = false;
-      clearTimeout(pollTimer);
-      pollTimer = null;
-      liveUnlimited = false;
-      liveSynced = false;
-      if (recording) { endTrackLocal(); finalSync(); }   // the tracker ends the recording when LIVE ends
-      setButtonState(false);
+    function markDirty(name) {
+      if (applyingRemote || !token) return;
+      viewDirty.add(name);
+      scheduleViewWrite();
     }
-    async function stopLive(message, level = "notice") {
-      if (stopping || !liveOn) return;
-      stopping = true;
-      const id = sessionId;
-      stopLocal();
-      showStatus(message, level);
+    function scheduleViewWrite() {
+      clearTimeout(viewTimer);
+      const now = Date.now();
+      const wait = Math.max(VIEW_DEBOUNCE_MS, lastViewWrite + VIEW_MIN_GAP_MS - now, viewBackoffUntil - now);
+      viewTimer = setTimeout(flushView, wait);
+    }
+    function snapshot(name) {
+      if (name === "cam") {
+        const c = map.getCenter();
+        return { lat: round6(c.lat()), lng: round6(c.lng()), z: map.getZoom(), type: mapType,
+          tr: layerOn.traffic ? 1 : 0, tf: layerOn.transit ? 1 : 0, bk: layerOn.bike ? 1 : 0, follow: followPaused ? 0 : 1 };
+      }
+      if (name === "measure") return { on: toolMode === "measure" ? 1 : 0, pts: measurePts.map(p => [round6(p.lat), round6(p.lng)]) };
+      if (name === "sv") {
+        const sv = map.getStreetView();
+        const on = sv.getVisible();
+        const pos = sv.getPosition();
+        const pov = sv.getPov() || {};
+        return { on: on ? 1 : 0, lat: pos ? round6(pos.lat()) : 0, lng: pos ? round6(pos.lng()) : 0,
+          h: Math.round((pov.heading || 0) * 10) / 10, p: Math.round((pov.pitch || 0) * 10) / 10 };
+      }
+      if (name === "bubble") return bubbleOpen ? 1 : 0;
+      return null;
+    }
+    async function flushView() {
+      viewTimer = null;
+      if (!token || !map || !viewDirty.size) return;
+      if (Date.now() < viewBackoffUntil) { scheduleViewWrite(); return; }
+      const names = [...viewDirty];
+      viewDirty.clear();
+      const snap = {};
+      for (const n of names) snap[n] = snapshot(n);
+      lastViewWrite = Date.now();
       try {
-        await writeLive(false, id);
+        await sharedWrite(cur => {
+          const next = { ...cur, rev: (cur.rev | 0) + 1, by: clientId };
+          for (const n of names) next[n] = snap[n];
+          return next;
+        }, "map view");
       } catch (error) {
-        if (error && error.status === 401) { relock("Token rejected (wrong or expired). Enter it again."); }
-        else showStatus(`LIVE stopped here, but the tracker may keep running until its own limit. (${describe(error)})`, "error");
-      } finally {
-        stopping = false;
+        if (error && (error.status === 403 || error.status === 429)) viewBackoffUntil = Date.now() + VIEW_BACKOFF_MS;
+        else for (const n of names) viewDirty.add(n);
+        handleError(error);
+        if (viewDirty.size) scheduleViewWrite();
       }
     }
-    async function startLive() {
-      sessionId = newSessionId();
-      showStatus("Starting LIVE…", "debug");
-      await writeLive(true, sessionId);
-      liveOn = true;
-      followPaused = false;
-      startedAt = Date.now();
-      liveSynced = false;
-      liveEndsAt = 0;
-      fetchCount = 0;
-      setButtonState(true);
-      showStatus("Waiting for the tracker (it checks in every ~10 s)…");
-      pollLatest();
+    function onViewState(d) {
+      if (!d || typeof d !== "object") return;
+      applySteps(d.steps);                          // the footsteps follow the shared state at once
+      if (d.by === clientId) { if (isNum(d.rev)) view.rev = Math.max(view.rev, d.rev); return; }   // my own change
+      if (isNum(d.rev) && d.rev <= view.rev) return;
+      pendingView = d;
+      tryApplyPending();
+    }
+    // Another device's map change is applied once this device's user has been idle for VIEW_IDLE_MS.
+    function tryApplyPending() {
+      if (!pendingView || !map || userBusy()) return;
+      const d = pendingView;
+      pendingView = null;
+      if (isNum(d.rev)) view.rev = d.rev;
+      applyingRemote = true;
+      try {
+        if (d.cam) applyCam(d.cam);
+        if (d.measure) applyMeasure(d.measure);
+        if (d.sv) applySv(d.sv);
+        if (d.bubble !== undefined) { openBubble(d.bubble === 1 || d.bubble === true); }
+      } catch (error) {
+        console.warn("[GPS] could not apply the shared view:", error);
+      } finally {
+        applyingRemote = false;
+      }
+    }
+    function applyCam(c) {
+      if (!c || typeof c !== "object") return;
+      cameraFromShared = true;
+      if (MAP_TYPES.includes(c.type)) setMapType(c.type, true);
+      setLayer("traffic", c.tr === 1, true);
+      setLayer("transit", c.tf === 1, true);
+      setLayer("bike", c.bk === 1, true);
+      followPaused = c.follow === 0;
+      const z = isNum(c.z) ? Math.min(22, Math.max(1, Math.round(c.z))) : map.getZoom();
+      map.setZoom(z);
+      if (!followPaused && marker) map.panTo(marker.getPosition());
+      else if (validLatLng(c.lat, c.lng)) map.setCenter({ lat: c.lat, lng: c.lng });
+    }
+    function applyMeasure(m) {
+      if (!m || typeof m !== "object") return;
+      measurePts = (Array.isArray(m.pts) ? m.pts : []).filter(p => Array.isArray(p) && validLatLng(p[0], p[1])).slice(0, 300)
+        .map(p => ({ lat: p[0], lng: p[1] }));
+      setToolMode(m.on === 1 ? "measure" : "none", true);
+      if (m.on === 1) renderMeasure();
+    }
+    function applySv(s) {
+      if (!s || typeof s !== "object") return;
+      const sv = map.getStreetView();
+      if (s.on === 1 && validLatLng(s.lat, s.lng)) {
+        sv.setPosition({ lat: s.lat, lng: s.lng });
+        sv.setPov({ heading: isNum(s.h) ? s.h : 0, pitch: isNum(s.p) ? s.p : 0 });
+        if (!sv.getVisible()) sv.setVisible(true);
+      } else if (sv.getVisible()) {
+        sv.setVisible(false);
+      }
+    }
+
+    // ---------- the LIVE / TRACK commands (live_status.json) ----------
+    // Every command is a read-modify-write on the freshest file, so devices cannot overwrite each other's changes;
+    // with two clicks at the same moment the last one wins.
+    const omit = (o, keys) => { const c = { ...o }; for (const k of keys) delete c[k]; return c; };
+    const cleanLive = cur => {
+      const b = { live: cur.live === true, id: cur.id };
+      if (cur.unlimited === true) b.unlimited = true;
+      if (cur.track === true && typeof cur.tid === "string") { b.track = true; b.tid = cur.tid; if (cur.tunl === true) b.tunl = true; }
+      return b;
+    };
+    const liveIsOn = cur => cur.live === true && typeof cur.id === "string" && ID_RE.test(cur.id);
+    const mutLiveStart = () => cur => ({ live: true, id: newId() });
+    const mutLiveStop = () => cur => (cur.live === true ? { live: false, id: cur.id } : null);
+    const mutLiveUnlimited = () => cur => {
+      if (!liveIsOn(cur)) return { live: true, id: newId(), unlimited: true };
+      if (cur.unlimited === true) return null;
+      return { ...cleanLive(cur), unlimited: true };
+    };
+    const mutTrackStart = (unl, tid) => cur => {
+      const b = liveIsOn(cur) ? cleanLive(cur) : { live: true, id: newId() };
+      b.track = true;
+      b.tid = tid;
+      delete b.tunl;
+      if (unl) { b.unlimited = true; b.tunl = true; }
+      return b;
+    };
+    const mutTrackStop = () => cur => (cur.live === true && cur.track === true ? omit(cleanLive(cur), ["track", "tid", "tunl"]) : null);
+    const mutTrackPromote = tid => cur => (cur.live === true && cur.track === true && cur.tid === tid
+      ? { ...cleanLive(cur), unlimited: true, tunl: true } : null);
+    const mutLiveEnd = id => cur => (cur.live === true && cur.id === id && cur.unlimited !== true && cur.tunl !== true ? { live: false, id } : null);
+    const mutTrackEnd = tid => cur => (cur.live === true && cur.track === true && cur.tid === tid && cur.tunl !== true
+      ? omit(cleanLive(cur), ["track", "tid", "tunl"]) : null);
+
+    function liveCmd(mutation, message) {
+      return liveQueue(async () => {
+        let seen = null, wrote = null;
+        await rmw(LIVE_PATH, cur => { seen = cur; wrote = mutation(cur); return wrote; }, message);
+        applyLiveStatus(wrote || seen);              // this device shows the result at once
+        lsFreshAt = Date.now();
+        poll.live.due = Date.now() + LIVE_POLL_MS;
+        poll.loc.due = 0;
+      });
+    }
+
+    function applyLiveStatus(raw) {
+      const prev = LS;
+      const n = normLS(raw);
+      LS = n;
+      if (n.id !== prev.id) {                        // another LIVE session (or none)
+        LL = null;
+        liveSynced = false;
+        liveEndsAt = 0;
+        firstReport = true;
+        sessionSeenAt = Date.now();
+        dataAt = sessionSeenAt;
+        autoBusy.live = 0;
+        lastCsvCount = 0;
+      } else if (n.unlimited !== prev.unlimited) {
+        liveSynced = false;
+      }
+      if (n.tid !== prev.tid || n.tunl !== prev.tunl) {
+        trackSynced = false;
+        trackEndsAt = 0;
+        trackSeenAt = Date.now();
+        autoBusy.track = 0;
+      }
+      if (prev.track && !n.track) stepsFinalAt = FINAL_SYNC_MS.map(ms => Date.now() + ms);   // the tracker's last rows
+      refreshUi();
+    }
+    function refreshUi() {
+      button.classList.toggle("live", LS.live);
+      button.setAttribute("aria-pressed", String(LS.live));
+      trackButton.classList.toggle("rec", LS.track);
+      trackButton.setAttribute("aria-pressed", String(LS.track));
+      updateLabels();
+      applyMarkerStatus();
+      if (bubbleOpen) refreshBubble();
     }
 
     // ---------- countdown ----------
     // The tracker enforces both 60 s limits itself and reports the seconds left ("ll" for LIVE, "tl" for TRACK) in
-    // latest.json and in the track file. The page counts down from those numbers, so the countdown starts when the
-    // tracker really starts (it needs up to 10 s to notice the command) and a reloaded page shows the right time.
-    function secsLeft(at) { return Math.max(0, Math.ceil((at - Date.now()) / 1000)); }
+    // latest_location.json. Every page counts down from those numbers, so all devices show the same time
+    // (give or take a second or two) and a page opened later shows the right time too.
     function updateLabels() {
-        const liveText = !liveOn ? "LIVE" : liveUnlimited ? "∞" : liveSynced ? `${secsLeft(liveEndsAt)}s` : "…";
-        const trackText = !recording ? "TRACK" : trackUnl ? "∞" : trackSynced ? `${secsLeft(trackEndsAt)}s` : "…";
+      const liveText = !LS.live ? "LIVE" : LS.unlimited ? "∞" : liveSynced ? `${secsLeft(liveEndsAt)}s` : "…";
+      const trackText = !LS.track ? "TRACK" : LS.tunl ? "∞" : trackSynced ? `${secsLeft(trackEndsAt)}s` : "…";
       if (button.textContent !== liveText) button.textContent = liveText;
       if (trackButton.textContent !== trackText) trackButton.textContent = trackText;
     }
     // Reports can be a few seconds old: only ever move the end earlier, never later.
     function syncTimes(data) {
-      if (!data) return;
       const now = Date.now();
-      if (!liveUnlimited && typeof data.ll === "number" && data.ll >= 0) {
+      if (!LS.unlimited && typeof data.ll === "number" && data.ll >= 0) {
         const at = now + data.ll * 1000;
         liveEndsAt = liveSynced ? Math.min(liveEndsAt, at) : at;
         liveSynced = true;
       }
-      if (recording && !trackUnl && typeof data.tl === "number" && data.tl >= 0) {
+      if (LS.track && !LS.tunl && typeof data.tl === "number" && data.tl >= 0) {
         const at = now + data.tl * 1000;
         trackEndsAt = trackSynced ? Math.min(trackEndsAt, at) : at;
         trackSynced = true;
       }
     }
+    // A 60 s LIVE / TRACK is over: the tracker has stopped by itself. One page (whichever notices first, with a little
+    // random delay) tells the shared state, so every device switches the button back.
+    function autoStop(kind) {
+      const now = Date.now();
+      if (now < autoBusy[kind]) return;
+      autoBusy[kind] = now + 8000;
+      const id = LS.id, tid = LS.tid;
+      setTimeout(() => {
+        if (!token) return;
+        const mutation = kind === "live" ? mutLiveEnd(id) : mutTrackEnd(tid);
+        liveCmd(mutation, kind === "live" ? "LIVE finished" : "TRACK finished").catch(handleError);
+      }, Math.random() * 1200);
+    }
     function tick() {
       updateLabels();
+      applyMarkerStatus();
+      if (bubbleOpen) refreshBubble();
+      tryApplyPending();
+      if (!token || !watching) return;
       const now = Date.now();
-      if (liveOn && !liveUnlimited && !stopping) {
-        if (liveSynced && now >= liveEndsAt + END_GRACE_MS) stopLive("60-second LIVE finished.").catch(handleError);
-        else if (!liveSynced && now - startedAt > NO_ANSWER_MS) stopLive("The tracker did not answer.", "error").catch(handleError);
+      if (now - lsFreshAt > 2 * LIVE_POLL_MS + 2000) return;      // do not judge the state from stale data
+      if (LS.live && !LS.unlimited) {
+        const over = liveSynced ? now >= liveEndsAt + END_GRACE_MS : now - sessionSeenAt > NO_ANSWER_MS;
+        if (over) autoStop("live");
       }
-      if (recording && !trackUnl && !finishing) {
-        const over = trackSynced ? now >= trackEndsAt + END_GRACE_MS : now - trackStartedAt > NO_ANSWER_MS;
-        if (over) {
-          finishing = true;
-          finishTrack60().catch(handleError).finally(() => { finishing = false; });
-        }
+      if (LS.track && !LS.tunl) {
+        const over = trackSynced ? now >= trackEndsAt + END_GRACE_MS : now - trackSeenAt > NO_ANSWER_MS;
+        if (over && LS.live) autoStop("track");
       }
     }
     setInterval(tick, 500);
 
-    function applyPart(part) {
-      syncTimes(part);
-      const rows = Array.isArray(part.pts) ? part.pts : [];
-      const newest = drawNewRows(1, rows);              // a 60 s track is always one part file
-      if (newest) updateMarker(newest.lat, newest.lng);
-      return rows.length > 0;
-    }
-    function applyData(data, id) {
-      if (!data || data.session !== id) {
-        showStatus("Waiting for the tracker (it checks in every ~10 s)…");
-        return;
+    // ---------- the tracker's report ----------
+    function onLatest(d) {
+      if (!d || typeof d !== "object" || !LS.live || d.session !== LS.id) return;   // a report of another session
+      LL = d;
+      const now = Date.now();
+      if (firstReport) {                                          // a page opened later: how old is this report really?
+        firstReport = false;
+        const g = Date.parse(d.gps_date + "T" + d.gps_utc + "Z");
+        dataAt = Number.isFinite(g) ? Math.min(now, g) : now;
+      } else {
+        dataAt = now;
       }
-      syncTimes(data);
-      if (recording && trackUnl) {
-        if (data.rec === trackName) recSeen = true;
-        else if (recSeen) {                              // the tracker no longer reports this recording (stopped elsewhere)
-          endTrackLocal();
-          finalSync();
-          showStatus("Recording ended on the tracker.");
-        }
+      syncTimes(d);
+      if (isNum(d.latitude) && isNum(d.longitude) && d.fix_quality !== 0) {
+        offerFix({ ts: mytFromUtc(d.gps_date, d.gps_utc), lat: d.latitude, lng: d.longitude,
+          alt: isNum(d.altitude_m) ? d.altitude_m : NaN, spd: isNum(d.speed_kmh) ? d.speed_kmh : NaN,
+          sats: isNum(d.satellites) ? d.satellites : null, hdop: isNum(d.hdop) ? d.hdop : null,
+          crs: isNum(d.course_deg) ? d.course_deg : null });
       }
-      const lat = data.latitude;
-      const lng = data.longitude;
-      if (lat === null || lng === null || data.fix_quality === 0) {
-        showStatus("Tracker online. Waiting for a GPS fix…");
-        return;
-      }
-      if (typeof lat !== "number" || typeof lng !== "number" ||
-          !Number.isFinite(lat) || !Number.isFinite(lng) ||
-          lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-        throw new Error("latest.json contains invalid latitude/longitude.");
-      }
-      updateMarker(lat, lng);
-      clearStatus();
-      showStatus(`GPS ${lat.toFixed(6)}, ${lng.toFixed(6)} · fetches ${fetchCount}`, "debug");
-    }
-    async function pollLatest() {
-      if (!liveOn || polling) return;
-      polling = true;
-      const id = sessionId;
-      try {
-        let fromPart = false;
-        if (recording && !trackUnl && trackName) {
-          // 60 s recording: the tracker writes every point to the track file (and nothing else), so read that
-          let part = null;
-          try {
-            part = await readJson(`${TRACK_DIR}/${trackName}_001.json`);
-          } catch (error) {
-            if (error.status !== 404) throw error;
-          }
-          if (!liveOn || id !== sessionId) return;
-          if (part && part.tid === trackId) fromPart = applyPart(part);
-        }
-        if (!fromPart) {
-          let data = null;
-          try {
-            data = await readJson(LATEST_PATH);
-          } catch (error) {
-            if (error.status !== 404) throw error;   // no file yet: the tracker has not written anything
-          }
-          if (!liveOn || id !== sessionId) return;
-          applyData(data, id);
-        }
-        fetchCount++;
-      } catch (error) {
-        if (error && (error.status === 403 || error.status === 429)) {
-          await stopLive(describe(error), "error");
-        } else {
-          handleError(error);
-        }
-      } finally {
-        polling = false;
-        if (liveOn) pollTimer = setTimeout(pollLatest, POLL_MS);
-      }
+      ensureSegment(d);
+      refreshUi();
     }
 
-    // The tracker keeps running when this page is closed or reloaded. After unlocking, take over a session that is
-    // still alive: live.json says LIVE and the tracker answered recently (latest.json or the track file).
-    function gpsTime(date, utc) {
-      return date && utc ? Date.parse(`${date}T${utc}Z`) : NaN;
+    // ---------- watching the shared files ----------
+    // Every open page reads live_status.json (the shared LIVE / TRACK state), view_state.json (the shared map view) and,
+    // while LIVE is on, latest_location.json. Unchanged files answer "304 Not Modified" and are free.
+    let watching = false;
+    function noteNet(ok, error) {
+      if (ok) { netFails = 0; return; }
+      netFails++;
+      if (error && (error.status === 403 || error.status === 429)) showStatus(describe(error), "error");
     }
-    function rowTime(row) {                          // [yyyymmdd, seconds of the day, ...]
-      if (!Array.isArray(row) || !(row[0] > 19000000) || !(row[1] >= 0)) return NaN;
-      const d = String(row[0]);
-      const s = row[1];
-      const hh = String(Math.floor(s / 3600)).padStart(2, "0"), mm = String(Math.floor(s % 3600 / 60)).padStart(2, "0"), ss = String(s % 60).padStart(2, "0");
-      return Date.parse(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T${hh}:${mm}:${ss}Z`);
-    }
-    async function readOptional(path) {
-      try { return await readJson(path); } catch (error) { if (error.status !== 404) throw error; return null; }
-    }
-    async function adoptRunning() {
+    const poll = {
+      live: { path: LIVE_PATH, st: { etag: null, last: null }, due: 0, busy: false, missing: false,
+        active: () => true, every: () => LIVE_POLL_MS,
+        onText: text => applyLiveStatus(JSON.parse(text)), onMissing: () => applyLiveStatus(null) },
+      view: { path: VIEW_PATH, st: { etag: null, last: null }, due: 0, busy: false, missing: false,
+        active: () => true, every: () => VIEW_POLL_MS,
+        onText: text => onViewState(JSON.parse(text)), onMissing: () => {} },
+      loc: { path: LATEST_PATH, st: { etag: null, last: null }, due: 0, busy: false, missing: false,
+        active: () => LS.live, every: () => (LS.unlimited ? LOC_POLL_INF_MS : LOC_POLL_60_MS),
+        onText: text => onLatest(JSON.parse(text)), onMissing: () => {} }
+    };
+    async function runPoll(p) {
+      p.busy = true;
+      let r = null;
       try {
-        const live = await readOptional(LIVE_PATH);
-        if (!live || live.live !== true || typeof live.id !== "string") return;
-        const tracking = live.track === true && /^track\d{1,6}$/.test(live.tname || "") && typeof live.tid === "string";
-        const trackNoLimit = tracking && live.tunl === true;
-        const latest = await readOptional(LATEST_PATH);
-        const part = tracking && !trackNoLimit ? await readOptional(`${TRACK_DIR}/${live.tname}_001.json`) : null;
-        const latestOk = Boolean(latest && latest.session === live.id);
-        const partOk = Boolean(part && part.tid === live.tid);
-        if (!latestOk && !partOk) return;
-        let when = NaN;
-        if (latestOk) when = gpsTime(latest.gps_date, latest.gps_utc);
-        if (partOk && Array.isArray(part.pts) && part.pts.length) {
-          const t = rowTime(part.pts[part.pts.length - 1]);
-          if (Number.isFinite(t) && !(t < when)) when = t;
-        }
-        if (Number.isFinite(when) && Math.abs(Date.now() - when) > ADOPT_MAX_AGE_MS) return;   // stale: not running any more
-        sessionId = live.id;
-        liveOn = true;
-        liveUnlimited = live.unlimited === true || trackNoLimit;
-        liveSynced = false;
-        followPaused = false;
-        startedAt = Date.now();
-        fetchCount = 0;
-        if (tracking) {
-          clearFootsteps();
-          beginTrack(live.tname, live.tid, trackNoLimit);
-          recSeen = Boolean(latestOk && latest.rec === live.tname);
-        }
-        if (latestOk) syncTimes(latest);
-        if (partOk) { applyPart(part); }
-        setButtonState(true);
-        if (trackNoLimit) { await syncTrack(); scheduleSync(TRACK_SYNC_MS); }   // footsteps recorded so far
-        pollLatest();
+        r = await condRead(p.path, p.st);
+        noteNet(true);
+        if (p === poll.live) lsFreshAt = Date.now();
       } catch (error) {
+        noteNet(false, error);
         handleError(error);
       }
+      p.busy = false;
+      p.due = Date.now() + (r && r.missing && p !== poll.loc ? MISSING_POLL_MS : p.every());
+      if (!r || r.same) return;
+      p.missing = Boolean(r.missing);
+      try {
+        if (r.missing) p.onMissing(); else p.onText(r.text);
+      } catch (error) {
+        console.warn("[GPS] could not use", p.path, error);
+      }
     }
+    function pollTick() {
+      if (!token || !watching || document.visibilityState === "hidden") return;
+      const now = Date.now();
+      for (const p of Object.values(poll)) {
+        if (!p.busy && p.active() && now >= p.due) runPoll(p);
+      }
+      if (!stepsBusy && steps.src.length && now >= stepsDue && map) {
+        const iv = stepsInterval();
+        const final = stepsFinalAt.length > 0 && now >= stepsFinalAt[0];
+        if (iv !== null || final) runSteps(final);
+      }
+    }
+    function startWatching() {
+      watching = true;
+      for (const p of Object.values(poll)) p.due = 0;
+      stepsDue = 0;
+      pollTick();
+    }
+    setInterval(pollTick, 400);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible" || !watching) return;
+      for (const p of Object.values(poll)) p.due = 0;
+      stepsDue = 0;
+      pollTick();
+    });
 
     // ---------- unlock ----------
     lockForm.addEventListener("submit", async event => {
@@ -1036,14 +1510,15 @@
         token = value;
         const config = await readJson(MAPS_CONFIG_PATH);
         const key = typeof config.key === "string" ? config.key.trim() : "";
-        if (!/^[A-Za-z0-9_-]{30,80}$/.test(key)) throw new Error("config/maps.json does not contain a valid Maps key.");
+        if (!/^[A-Za-z0-9_-]{30,80}$/.test(key)) throw new Error("config/gmap.json does not contain a valid Maps key.");
         await loadGoogleMaps(key);
         lockError.textContent = "";
         lockEl.hidden = true;
         button.disabled = false;
         trackButton.disabled = false;
         layersButton.disabled = measureButton.disabled = false;
-        await adoptRunning();                        // pick up a LIVE / TRACK that kept running while the page was closed
+        netFails = 0;
+        startWatching();                              // picks up a LIVE / TRACK that is already running, on any device
       } catch (error) {
         token = "";
         lockError.textContent = describe(error);
@@ -1062,19 +1537,11 @@
       button.classList.remove("holding");
     }
     async function goUnlimited() {
-      if (busy || liveUnlimited) return;
+      if (busy) return;
       busy = true;
       try {
-        liveUnlimited = true;
-        if (!liveOn) {
-          await startLive();
-        } else {
-          liveSynced = false;
-          setButtonState(true);
-          await writeLive(true, sessionId);          // tells the tracker there is no limit (same session)
-        }
+        await liveCmd(mutLiveUnlimited(), "LIVE no limit");
       } catch (error) {
-        if (!liveOn) { liveUnlimited = false; setButtonState(false); }
         handleError(error);
       } finally {
         busy = false;
@@ -1100,8 +1567,8 @@
       busy = true;
       button.disabled = true;
       try {
-        if (!liveOn) await startLive();
-        else await stopLive("LIVE stopped.");
+        if (!LS.live) await liveCmd(mutLiveStart(), "LIVE ON");
+        else await liveCmd(mutLiveStop(), "LIVE OFF");
       } catch (error) {
         handleError(error);
       } finally {
@@ -1125,12 +1592,18 @@
         blockClickUntil = Date.now() + 600;          // the click that follows the release must not toggle recording
       }
     }
+    async function startTrack(unl) {
+      const tid = newId();
+      const reset = resetSteps(tid).catch(handleError);      // the footsteps of the previous TRACK disappear on every device
+      await liveCmd(mutTrackStart(unl, tid), unl ? "TRACK ON (no limit)" : "TRACK ON");
+      await reset;
+    }
     async function trackHold() {
-      if (busy || (recording && trackUnl)) return;
+      if (busy || (LS.track && LS.tunl)) return;
       busy = true;
       try {
-        if (recording) await promoteTrack();
-        else await startTracking(true);
+        if (LS.track) await liveCmd(mutTrackPromote(LS.tid), "TRACK no limit");
+        else await startTrack(true);
       } catch (error) {
         handleError(error);
       } finally {
@@ -1138,12 +1611,12 @@
       }
     }
     async function trackTap() {
-      if (recording) { stopTracking().catch(handleError); return; }
       if (busy) return;
       busy = true;
       trackButton.disabled = true;
       try {
-        await startTracking(false);
+        if (LS.track) await liveCmd(mutTrackStop(), "TRACK OFF");
+        else await startTrack(false);
       } catch (error) {
         handleError(error);
       } finally {
@@ -1169,24 +1642,19 @@
     trackButton.addEventListener("contextmenu", event => event.preventDefault());
     trackButton.addEventListener("click", () => {
       if (Date.now() < blockClickUntil) return;
-      if (tapTimer) {                                // second tap in time: clear the footsteps (display only)
+      if (tapTimer) {                                // second tap in time: clear the footsteps on every device
         clearTimeout(tapTimer);
         tapTimer = null;
-        clearFootsteps();
+        clearSteps().catch(handleError);
         return;
       }
       tapTimer = setTimeout(() => { tapTimer = null; trackTap(); }, DOUBLE_TAP_MS);
     });
 
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" && liveOn && !polling) {
-        clearTimeout(pollTimer);
-        pollLatest();
-      }
-      if (document.visibilityState === "visible" && recording && trackUnl) syncTrack();
-    });
-
-    setButtonState(false);
+    if (DEBUG) {
+      window.__gps = { state: () => ({ LS, LL, steps, fixInfo, status: connStatus(), drawn: drawn.length, H: H.slice(), followPaused, mapType, layerOn, bubbleOpen, view }) };
+    }
+    refreshUi();
     try { checkConfig(); } catch (error) { lockError.textContent = error.message; unlockBtn.disabled = true; }
   })();
   </script>
